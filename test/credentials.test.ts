@@ -19,7 +19,14 @@ describe('getPlanName', () => {
 
   test('returns null for API users', () => {
     assert.equal(getPlanName('api_user'), null);
+    assert.equal(getPlanName('api'), null);
+    assert.equal(getPlanName('claude_api'), null);
     assert.equal(getPlanName(''), null);
+  });
+
+  test('does not false-positive on subscription types containing "api" as substring', () => {
+    // 'rapid' contains the substring 'api' but is not an API user
+    assert.notEqual(getPlanName('rapid_plan'), null);
   });
 
   test('capitalises unknown plan types', () => {

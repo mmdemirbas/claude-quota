@@ -1,15 +1,12 @@
 {
   "name": "claude-quota",
   "description": "Compact quota-focused statusline for Claude Code — session, weekly, sonnet, and extra usage at a glance",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "Muhammed",
     "url": "https://github.com/mdemirbas"
   },
-  "commands": [
-    "./commands/setup.md"
-  ],
-  "homepage": "https://github.com/mdemirbas/claude-quota",
+"homepage": "https://github.com/mdemirbas/claude-quota",
   "license": "MIT",
   "keywords": ["statusline", "usage", "quota", "claude-code"]
 }

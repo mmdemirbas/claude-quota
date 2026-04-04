@@ -125,6 +125,6 @@ export function getPlanName(subscriptionType: string, rateLimitTier?: string): s
   if (lower.includes('max') || tierLower.includes('max')) return `Max${mult}`;
   if (lower.includes('pro') || tierLower.includes('pro')) return 'Pro';
   if (lower.includes('team') || tierLower.includes('team')) return 'Team';
-  if (!subscriptionType || lower.includes('api')) return null;
+  if (!subscriptionType || lower.split(/[\s_-]+/).includes('api')) return null;
   return subscriptionType.charAt(0).toUpperCase() + subscriptionType.slice(1);
 }

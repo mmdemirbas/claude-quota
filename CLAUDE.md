@@ -29,12 +29,12 @@ npm run test:stdin     # pipe mock JSON to test output
 2. Plugin reads OAuth token from macOS Keychain (`/usr/bin/security find-generic-password`)
 3. Calls `GET api.anthropic.com/api/oauth/usage` with Bearer token
 4. Parses ALL response fields (five_hour, seven_day, seven_day_sonnet, seven_day_opus, extra_usage)
-5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (5 min TTL)
-6. Renders two-line status bar to stdout
+5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (5 min TTL; 15 s on error; exponential backoff on 429)
+6. Renders three lines to stdout
 
 ## Key Design Decisions
 
-- **Two-line layout**: line 1 = context (model, ctx window, project, git); line 2 = account (plan, quotas, extra usage)
+- **Three-line layout**: line 1 = context (model, ctx window, project, git); line 2 = plan + 5h session + 7d all-models; line 3 = sonnet + opus + extra usage
 - **Pace indicators**: each quota shows current%, directional glyph (↘/→/↗), projected%, and reset countdown
 - **Full API parsing**: unlike claude-hud, we parse seven_day_sonnet, seven_day_opus, extra_usage
 - **File-based cache**: process is short-lived (~300ms per render), so no in-memory cache

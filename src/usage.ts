@@ -159,17 +159,17 @@ export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsag
 export async function getUsage(): Promise<UsageData | null> {
   const now = Date.now();
 
-  // Skip if using custom API endpoint
+  // Check cache first — serve cached data regardless of env settings
+  const cached = readCache(now);
+  if (cached) return cached;
+
+  // Skip fetching if using a non-Anthropic API endpoint
   const baseUrl = (process.env.ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_API_BASE_URL ?? '').trim();
   if (baseUrl) {
     try {
       if (new URL(baseUrl).origin !== 'https://api.anthropic.com') return null;
     } catch { return null; }
   }
-
-  // Check cache
-  const cached = readCache(now);
-  if (cached) return cached;
 
   // Read credentials
   const creds = readCredentials(now);

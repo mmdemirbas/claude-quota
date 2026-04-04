@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-04-04
+
+### Added
+- GitHub Actions CI workflow: lint + test on Node 20 and 22, triggers on push to main and PRs
+- GitHub Actions publish workflow: lint + test + `npm publish --provenance` on `v*` tags
+- ESLint with `typescript-eslint` recommended rules (`npm run lint`)
+
 ## 0.2.0 — 2026-04-04
 
 ### Added
