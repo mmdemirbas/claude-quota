@@ -18,9 +18,14 @@
     "dev": "tsc --watch",
     "prepare": "npm run build",
     "test": "tsc -p tsconfig.test.json && node --test 'dist-test/test/*.test.js'",
+    "lint": "tsc --noEmit && eslint src/ test/",
     "test:stdin": "echo '{\"model\":{\"display_name\":\"Claude Sonnet 4.6\"},\"effort_level\":\"high\",\"context_window\":{\"current_usage\":{\"input_tokens\":45000},\"context_window_size\":200000},\"cwd\":\"/Users/md/code/lakelab\"}' | node dist/index.js"
   },
-  "keywords": ["claude-code", "statusline", "quota"],
+  "keywords": [
+    "claude-code",
+    "statusline",
+    "quota"
+  ],
   "author": "Muhammed Demirbas <https://github.com/mdemirbas>",
   "license": "MIT",
   "repository": {
@@ -36,6 +41,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.0.0"
+    "eslint": "^10.2.0",
+    "typescript": "^5.0.0",
+    "typescript-eslint": "^8.58.0"
   }
 }
