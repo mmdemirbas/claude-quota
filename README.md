@@ -5,7 +5,9 @@ more visiting the usage page.
 
 ## What you see
 
-![img.png](docs/img.png)
+![dark.png](docs/dark.png)
+
+![light.png](docs/light.png)
 
 ```
 sonnet high │ ctx:██░░░░░░░░  23% │ lakelab git:(main*)
