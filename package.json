@@ -16,7 +16,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "prepare": "npm run build",
-    "test": "tsc -p tsconfig.test.json && node --test 'dist-test/test/*.test.js'",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
     "lint": "tsc --noEmit && eslint src/ test/",
     "test:stdin": "echo '{\"model\":{\"display_name\":\"Claude Sonnet 4.6\"},\"effort_level\":\"high\",\"context_window\":{\"current_usage\":{\"input_tokens\":45000},\"context_window_size\":200000},\"cwd\":\"/Users/md/code/lakelab\"}' | node dist/index.js"
   },
