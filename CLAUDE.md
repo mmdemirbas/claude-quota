@@ -36,8 +36,10 @@ src/
 
 ## Key Design Decisions
 
-- **Three-line layout**: line 1 = context (model, ctx window, project, git); line 2 = plan + 5h session + 7d all-models; line 3 = sonnet + opus + extra usage
+- **Three-line layout**: line 1 = context (model, ctx window, project, git); line 2 = plan + 5h session + 7d all-models; line 3 = fetch time + sonnet + opus + extra usage
 - **Pace indicators**: each quota shows current%, directional glyph (↘/→/↗), projected%, and reset countdown
+- **Fixed-width columns**: all quota segments (label, bar, value, pace, reset/limit) use the same char widths so glyphs align across lines
+- **Fetch time**: `fetchedAt` stored in `UsageData`, rendered as `⟳HH:MM` in the col-0 of line 3 (exact local time, not relative — stays accurate without per-second refresh)
 - **Full API parsing**: unlike claude-hud, we parse seven_day_sonnet, seven_day_opus, extra_usage
 - **File-based cache**: process is short-lived (~300ms per render), so no in-memory cache
 - **Rate-limit resilience**: on 429, show last-good data with ⟳ indicator + exponential backoff

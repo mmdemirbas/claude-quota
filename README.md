@@ -11,8 +11,8 @@ more visiting the usage page.
 
 ```
 sonnet high │ ctx:██░░░░░░░░  23% │ lakelab git:(main*)
-max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d:██░░░░░░░░  23% ↘ 76% ↺4d20h
-            │ snt:██████░░░░  63% → 91% ↺2d3h  │  ●$:░░░░░░░░░░ $0  ↘$0/$5
+max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d:██░░░░░░░░  23% ↘  76% ↺4d20h
+⟳18:01      │ snt:██████░░░░  63% → 91% ↺2d3h  │  ●$:░░░░░░░░░░   $0 ↘  $0 /$5
 ```
 
 ### Segments
@@ -36,8 +36,9 @@ max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d
 | ` 17%`                          | Current utilization, right-justified to 4 chars                                         |
 | `↘ 32%` / `→ 90%` / `↗140%`     | Pace glyph + projected end-of-window utilization; >100% means you will exceed the quota |
 | `↺3h56m`                        | Time until quota resets                                                                 |
+| `⟳18:01`                        | Local time of last usage data fetch (shown in col-0 of line 3)                          |
 | `●$:` / `○$:`                   | Extra usage enabled (`●`) or disabled (`○`)                                             |
-| `$0 ↘$0/$5`                     | Current spend · pace glyph · projected / monthly limit                                  |
+| `  $0 ↘  $0 /$5`                | Current spend · pace glyph · projected · monthly limit (all fixed-width, aligned)       |
 
 ### Color coding
 
