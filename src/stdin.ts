@@ -39,6 +39,11 @@ export function getContextPercent(stdin: StdinData): number {
   return Math.min(100, Math.round((total / size) * 100));
 }
 
+/** Reads effort level from whichever field name Claude Code uses in the current version. */
+export function getEffortLevel(stdin: StdinData): string | null {
+  return stdin.effort_level ?? stdin.effortLevel ?? stdin.effort ?? null;
+}
+
 export function getProjectName(stdin: StdinData): string | null {
   if (!stdin.cwd) return null;
   const segments = stdin.cwd.split(/[/\\]/).filter(Boolean);

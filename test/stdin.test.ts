@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { getModelName, getContextPercent, getProjectName } from '../src/stdin.js';
+import { getModelName, getContextPercent, getProjectName, getEffortLevel } from '../src/stdin.js';
 import type { StdinData } from '../src/types.js';
 
 describe('getModelName', () => {
@@ -102,5 +102,27 @@ describe('getProjectName', () => {
   test('handles root path gracefully', () => {
     const stdin: StdinData = { cwd: '/' };
     assert.equal(getProjectName(stdin), null);
+  });
+});
+
+describe('getEffortLevel', () => {
+  test('reads effort_level (snake_case)', () => {
+    assert.equal(getEffortLevel({ effort_level: 'high' }), 'high');
+  });
+
+  test('reads effortLevel (camelCase) as fallback', () => {
+    assert.equal(getEffortLevel({ effortLevel: 'medium' }), 'medium');
+  });
+
+  test('prefers effort_level over effortLevel when both present', () => {
+    assert.equal(getEffortLevel({ effort_level: 'high', effortLevel: 'low' }), 'high');
+  });
+
+  test('reads effort (no-underscore) as fallback', () => {
+    assert.equal(getEffortLevel({ effort: 'low' }), 'low');
+  });
+
+  test('returns null when absent', () => {
+    assert.equal(getEffortLevel({}), null);
   });
 });

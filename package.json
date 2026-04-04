@@ -1,9 +1,12 @@
 {
   "name": "claude-quota",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Compact quota-focused statusline for Claude Code",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "claude-quota": "dist/index.js"
+  },
   "files": [
     "dist/",
     "src/",
@@ -15,11 +18,19 @@
     "dev": "tsc --watch",
     "prepare": "npm run build",
     "test": "tsc -p tsconfig.test.json && node --test 'dist-test/test/*.test.js'",
-    "test:stdin": "echo '{\"model\":{\"display_name\":\"Sonnet 4.6\"},\"context_window\":{\"current_usage\":{\"input_tokens\":45000},\"context_window_size\":200000},\"cwd\":\"/Users/md/code/lakelab\"}' | node dist/index.js"
+    "test:stdin": "echo '{\"model\":{\"display_name\":\"Claude Sonnet 4.6\"},\"effort_level\":\"high\",\"context_window\":{\"current_usage\":{\"input_tokens\":45000},\"context_window_size\":200000},\"cwd\":\"/Users/md/code/lakelab\"}' | node dist/index.js"
   },
   "keywords": ["claude-code", "statusline", "quota"],
   "author": "Muhammed Demirbas <https://github.com/mdemirbas>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mdemirbas/claude-quota.git"
+  },
+  "homepage": "https://github.com/mdemirbas/claude-quota#readme",
+  "bugs": {
+    "url": "https://github.com/mdemirbas/claude-quota/issues"
+  },
   "engines": {
     "node": ">=18.0.0"
   },

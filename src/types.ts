@@ -1,6 +1,9 @@
 /** JSON structure Claude Code sends on stdin */
 export interface StdinData {
   model?: { display_name?: string };
+  effort_level?: string;  // snake_case variant
+  effortLevel?: string;   // camelCase variant
+  effort?: string;        // no-underscore variant
   context_window?: {
     current_usage?: {
       input_tokens?: number;

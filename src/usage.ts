@@ -90,7 +90,7 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
       headers: {
         'Authorization': `Bearer ${accessToken}`,
         'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': 'claude-quota/0.1',
+        'User-Agent': 'claude-quota/0.2',
       },
       timeout: API_TIMEOUT_MS,
     }, (res) => {
@@ -143,11 +143,14 @@ export function parseDate(s: string | undefined): Date | null {
 
 /** Exported for testing. */
 export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsageData | null {
-  if (!raw?.is_enabled || !raw.monthly_limit) return null;
+  if (raw == null) return null; // API didn't return extra_usage at all
+  if (!raw.is_enabled) return { enabled: false, monthlyLimit: 0, usedCredits: 0 };
+  if (!raw.monthly_limit) return null; // enabled but no limit — avoid $0/$0 display
+  // API returns values in cents; convert to dollars for display
   return {
     enabled: true,
-    monthlyLimit: raw.monthly_limit,
-    usedCredits: raw.used_credits ?? 0,
+    monthlyLimit: raw.monthly_limit / 100,
+    usedCredits: (raw.used_credits ?? 0) / 100,
   };
 }
 
@@ -172,7 +175,7 @@ export async function getUsage(): Promise<UsageData | null> {
   const creds = readCredentials(now);
   if (!creds) return null;
 
-  const planName = getPlanName(creds.subscriptionType);
+  const planName = getPlanName(creds.subscriptionType, creds.rateLimitTier);
   if (!planName) return null; // API user
 
   // Fetch

@@ -58,11 +58,9 @@ describe('parseExtraUsage', () => {
     assert.equal(parseExtraUsage(undefined), null);
   });
 
-  test('returns null when is_enabled is false', () => {
-    assert.equal(
-      parseExtraUsage({ is_enabled: false, monthly_limit: 500, used_credits: 10 }),
-      null,
-    );
+  test('returns disabled state when is_enabled is false', () => {
+    const result = parseExtraUsage({ is_enabled: false, monthly_limit: 500, used_credits: 10 });
+    assert.deepEqual(result, { enabled: false, monthlyLimit: 0, usedCredits: 0 });
   });
 
   test('returns null when monthly_limit is 0 (avoids $0/$0 display)', () => {
@@ -76,17 +74,18 @@ describe('parseExtraUsage', () => {
     assert.equal(parseExtraUsage({ is_enabled: true }), null);
   });
 
-  test('parses enabled extra usage correctly', () => {
+  test('parses enabled extra usage correctly, converting cents to dollars', () => {
     const result = parseExtraUsage({
       is_enabled: true,
       monthly_limit: 500,
-      used_credits: 12.5,
+      used_credits: 1250,
     });
-    assert.deepEqual(result, { enabled: true, monthlyLimit: 500, usedCredits: 12.5 });
+    assert.deepEqual(result, { enabled: true, monthlyLimit: 5, usedCredits: 12.5 });
   });
 
   test('defaults used_credits to 0 when absent', () => {
     const result = parseExtraUsage({ is_enabled: true, monthly_limit: 500 });
     assert.equal(result?.usedCredits, 0);
+    assert.equal(result?.monthlyLimit, 5);
   });
 });

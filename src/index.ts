@@ -1,13 +1,29 @@
+#!/usr/bin/env node
 import { readStdin } from './stdin.js';
 import { getUsage } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { fileURLToPath } from 'node:url';
-import { realpathSync } from 'node:fs';
+import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+const DEBUG = process.env.CLAUDE_QUOTA_DEBUG === '1';
+
+function debugDump(filename: string, data: unknown): void {
+  if (!DEBUG) return;
+  try {
+    const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, filename), JSON.stringify(data, null, 2), 'utf8');
+  } catch { /* ignore */ }
+}
 
 async function main(): Promise<void> {
   try {
     const stdin = await readStdin();
+    debugDump('.debug-stdin.json', stdin);
+
     if (!stdin) {
       console.log('[claude-quota] Ready. Restart Claude Code to activate.');
       return;

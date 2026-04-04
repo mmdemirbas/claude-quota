@@ -10,6 +10,7 @@ const KEYCHAIN_TIMEOUT_MS = 3000;
 export interface Credentials {
   accessToken: string;
   subscriptionType: string;
+  rateLimitTier?: string;
 }
 
 interface CredentialsFile {
@@ -17,7 +18,7 @@ interface CredentialsFile {
     accessToken?: string;
     refreshToken?: string;
     subscriptionType?: string;
-    rateLimitTier?: string;
+    rateLimitTier?: string;  // e.g. "default_claude_max_5x"
     expiresAt?: number;
   };
 }
@@ -52,6 +53,7 @@ function parseCredentials(data: CredentialsFile, now: number): Credentials | nul
   return {
     accessToken: token,
     subscriptionType: data.claudeAiOauth?.subscriptionType ?? '',
+    rateLimitTier: data.claudeAiOauth?.rateLimitTier,
   };
 }
 
@@ -113,12 +115,16 @@ export function readCredentials(now: number = Date.now()): Credentials | null {
   return readFromKeychain(now) ?? readFromFile(now);
 }
 
-/** Derive plan name from subscription type */
-export function getPlanName(subscriptionType: string): string | null {
+/** Derive plan name from subscription type and optional rate-limit tier. */
+export function getPlanName(subscriptionType: string, rateLimitTier?: string): string | null {
   const lower = subscriptionType.toLowerCase();
-  if (lower.includes('max')) return 'Max';
-  if (lower.includes('pro')) return 'Pro';
-  if (lower.includes('team')) return 'Team';
+  const tierLower = (rateLimitTier ?? '').toLowerCase();
+  // Multiplier is in rateLimitTier (e.g. "default_claude_max_5x" → "5x")
+  const multMatch = tierLower.match(/(\d+)x/) ?? lower.match(/(\d+)x/);
+  const mult = multMatch ? ` ${multMatch[1]}x` : '';
+  if (lower.includes('max') || tierLower.includes('max')) return `Max${mult}`;
+  if (lower.includes('pro') || tierLower.includes('pro')) return 'Pro';
+  if (lower.includes('team') || tierLower.includes('team')) return 'Team';
   if (!subscriptionType || lower.includes('api')) return null;
   return subscriptionType.charAt(0).toUpperCase() + subscriptionType.slice(1);
 }

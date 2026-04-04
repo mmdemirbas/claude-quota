@@ -19,6 +19,7 @@ src/
 
 ```bash
 npm run build          # tsc → dist/
+npm test               # compile test build + run all unit tests
 npm run test:stdin     # pipe mock JSON to test output
 ```
 
@@ -29,11 +30,12 @@ npm run test:stdin     # pipe mock JSON to test output
 3. Calls `GET api.anthropic.com/api/oauth/usage` with Bearer token
 4. Parses ALL response fields (five_hour, seven_day, seven_day_sonnet, seven_day_opus, extra_usage)
 5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (5 min TTL)
-6. Renders single-line status bar to stdout
+6. Renders two-line status bar to stdout
 
 ## Key Design Decisions
 
-- **Single status line**: no expanded/compact modes, no config file system — keep it simple
+- **Two-line layout**: line 1 = context (model, ctx window, project, git); line 2 = account (plan, quotas, extra usage)
+- **Pace indicators**: each quota shows current%, directional glyph (↘/→/↗), projected%, and reset countdown
 - **Full API parsing**: unlike claude-hud, we parse seven_day_sonnet, seven_day_opus, extra_usage
 - **File-based cache**: process is short-lived (~300ms per render), so no in-memory cache
 - **Rate-limit resilience**: on 429, show last-good data with ⟳ indicator + exponential backoff
