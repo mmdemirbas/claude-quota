@@ -1,5 +1,5 @@
 {
-  "name": "claude-quota",
+  "name": "@mmdemirbas/claude-quota",
   "version": "0.2.2",
   "description": "Compact quota-focused statusline for Claude Code",
   "type": "module",

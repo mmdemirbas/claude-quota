@@ -50,7 +50,7 @@ max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d
 ### Option A: npm (recommended)
 
 ```bash
-npm install -g claude-quota
+npm install -g @mmdemirbas/claude-quota
 ```
 
 Then configure the statusline in `~/.claude/settings.json`:
