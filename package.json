@@ -1,0 +1,30 @@
+{
+  "name": "claude-quota",
+  "version": "0.1.0",
+  "description": "Compact quota-focused statusline for Claude Code",
+  "type": "module",
+  "main": "dist/index.js",
+  "files": [
+    "dist/",
+    "src/",
+    "commands/",
+    ".claude-plugin/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepare": "npm run build",
+    "test": "tsc -p tsconfig.test.json && node --test 'dist-test/test/*.test.js'",
+    "test:stdin": "echo '{\"model\":{\"display_name\":\"Sonnet 4.6\"},\"context_window\":{\"current_usage\":{\"input_tokens\":45000},\"context_window_size\":200000},\"cwd\":\"/Users/md/code/lakelab\"}' | node dist/index.js"
+  },
+  "keywords": ["claude-code", "statusline", "quota"],
+  "author": "Muhammed Demirbas <https://github.com/mdemirbas>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0"
+  }
+}

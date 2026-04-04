@@ -1,0 +1,14 @@
+# Ignore node modules and build artifacts
+node_modules/
+dist/
+dist-test/
+*.tgz
+
+# Plugin cache files (runtime, not repo)
+.usage-cache.json
+.usage-cache.lock
+.keychain-backoff
+
+# IDE
+.idea/
+.vscode/
