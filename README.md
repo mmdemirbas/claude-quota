@@ -69,7 +69,7 @@ Then configure the statusline in `~/.claude/settings.json`:
 ### Option B: from source
 
 ```bash
-git clone https://github.com/mdemirbas/claude-quota.git
+git clone https://github.com/mmdemirbas/claude-quota.git
 cd claude-quota
 npm install
 ./run install
