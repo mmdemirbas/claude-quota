@@ -55,6 +55,8 @@ export interface UsageData {
   /** API error state */
   apiUnavailable?: boolean;
   apiError?: ApiError;
+  /** Unix ms when this data was fetched from the API (or loaded from cache). */
+  fetchedAt?: number;
 }
 
 export interface ExtraUsageData {

@@ -106,6 +106,14 @@ export function resetIn(resetAt: Date | null, now: number): string {
   return remMins > 0 ? `${hours}h${remMins}m` : `${hours}h`;
 }
 
+/** Format fetch timestamp as ⟳HH:MM (local time). Exported for testing. */
+export function formatFetchTime(fetchedAt: number): string {
+  const d = new Date(fetchedAt);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `⟳${h}:${m}`;
+}
+
 // ── Pace calculation ────────────────────────────────────────────────────────
 
 const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
@@ -211,7 +219,10 @@ export function formatMoney(amount: number): string {
   return `$${Math.round(amount)}`;
 }
 
-/** Format:  $:● bar $value{glyph}{$projected}/$limit  or  $:○ when disabled */
+/** Format:  ●$: bar $value glyph $projected /$limit  or  ○$: when disabled.
+ *  Uses the same fixed-width columns as renderQuota so bars, values, glyphs,
+ *  and trailing fields stay aligned across lines.
+ *  label:4  bar:10  sp:1  value:4  pace:6  limit:7  = 32 visible chars */
 function renderExtraUsage(usage: UsageData, now: number): string | null {
   if (!usage.extraUsage) return null;
   if (!usage.extraUsage.enabled) return `${dim(' ○$:')}`;
@@ -222,8 +233,12 @@ function renderExtraUsage(usage: UsageData, now: number): string | null {
 
   const b = bar(usedPct, 10, moneyBarColor);
 
+  // value: right-justified in 4 chars (matches pct field in renderQuota)
+  const valueStr = formatMoney(usedCredits).padStart(4);
+
+  // pace: 1(space) + 1(glyph) + 4(projected padded) = 6 chars, or 6 spaces
+  let paceStr: string;
   const elapsedFraction = monthElapsedFraction(now);
-  let paceStr = '';
   if (elapsedFraction >= 0.02) {
     const projectedSpend = usedCredits / elapsedFraction;
     const paceRatio = ratio / elapsedFraction;
@@ -239,10 +254,17 @@ function renderExtraUsage(usage: UsageData, now: number): string | null {
     }
 
     const projColor = projRatio > 1 ? RED : projRatio >= 0.8 ? YELLOW : DIM;
-    paceStr = ` ${glyphColor}${glyph}${R}${projColor}${formatMoney(projectedSpend)}${R}`;
+    const projStr = formatMoney(projectedSpend).padStart(4);
+    paceStr = ` ${glyphColor}${glyph}${R}${projColor}${projStr}${R}`;
+  } else {
+    paceStr = '      '; // 6 spaces
   }
 
-  return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${formatMoney(usedCredits)}${R}${paceStr}${dim('/')}${dim(formatMoney(monthlyLimit))}`;
+  // limit: 1(space) + /+value padded to 6 = 7 chars (matches reset field in renderQuota)
+  const limitPad = `/${formatMoney(monthlyLimit)}`.padEnd(6);
+  const limitStr = ` ${dim(limitPad)}`;
+
+  return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${paceStr}${limitStr}`;
 }
 
 // ── Main render ────────────────────────────────────────────────────────────
@@ -318,8 +340,10 @@ export function render(input: RenderInput): void {
       console.log(`${R}${line2.join(dim(' │ '))}${line3.length ? '' : syncHint}`);
     }
     if (line3.length > 0) {
-      const spacer = ' '.repeat(col0Width);
-      const parts = planText ? [spacer, ...line3] : line3;
+      const col0 = (planText && usage.fetchedAt)
+        ? pad0(formatFetchTime(usage.fetchedAt), DIM)
+        : ' '.repeat(col0Width);
+      const parts = planText ? [col0, ...line3] : line3;
       console.log(`${R}${parts.join(dim(' │ '))}${syncHint}`);
     } else if (!planText && line2.length === 0 && usage.apiError === 'rate-limited') {
       console.log(`${R}${dim('⟳')}`);

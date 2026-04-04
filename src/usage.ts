@@ -48,7 +48,7 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
         const display = cache.lastGoodData
           ? { ...hydrateDates(cache.lastGoodData), apiError: 'rate-limited' as const }
           : hydrateDates(cache.data);
-        return { data: display, isStale: false };
+        return { data: { ...display, fetchedAt: cache.timestamp }, isStale: false };
       }
       // Backoff expired — fetch fresh regardless of failure TTL
       return null;
@@ -62,7 +62,7 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
         : hydrateDates(cache.data);
       // Only mark stale for successful responses; failures have a short TTL already
       const isStale = !cache.data.apiUnavailable && age >= CACHE_SOFT_TTL_MS;
-      return { data: display, isStale };
+      return { data: { ...display, fetchedAt: cache.timestamp }, isStale };
     }
 
     return null;
@@ -230,6 +230,7 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
   // Parse full response
   const usage: UsageData = {
     planName,
+    fetchedAt: now,
     fiveHour: clamp(result.data.five_hour?.utilization),
     fiveHourResetAt: parseDate(result.data.five_hour?.resets_at),
     sevenDay: clamp(result.data.seven_day?.utilization),
