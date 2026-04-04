@@ -5,7 +5,8 @@ import * as https from 'node:https';
 import type { UsageApiResponse, UsageData, ExtraUsageData, CacheFile, ApiError } from './types.js';
 import { readCredentials, getPlanName } from './credentials.js';
 
-const CACHE_TTL_MS = 5 * 60_000;           // 5 min for success
+const CACHE_TTL_MS = 5 * 60_000;           // 5 min hard TTL (force re-fetch)
+const CACHE_SOFT_TTL_MS = 2 * 60_000;      // 2 min soft TTL (serve stale + background refresh)
 const CACHE_FAILURE_TTL_MS = 15_000;        // 15s for failures
 const CACHE_RATE_LIMITED_BASE_MS = 60_000;   // 60s base for 429 backoff
 const CACHE_RATE_LIMITED_MAX_MS = 5 * 60_000;
@@ -30,7 +31,7 @@ function hydrateDates(data: UsageData): UsageData {
   return d;
 }
 
-function readCache(now: number): UsageData | null {
+function readCache(now: number): { data: UsageData; isStale: boolean } | null {
   try {
     const raw = fs.readFileSync(getCachePath(), 'utf8');
     const cache: CacheFile = JSON.parse(raw);
@@ -43,22 +44,25 @@ function readCache(now: number): UsageData | null {
       );
       const retryUntil = cache.retryAfterUntil ?? (cache.timestamp + backoff);
       if (now < retryUntil) {
-        // Still in backoff — return last good data with syncing hint
+        // Still in backoff — return last good data with syncing hint; never trigger background refresh
         const display = cache.lastGoodData
           ? { ...hydrateDates(cache.lastGoodData), apiError: 'rate-limited' as const }
           : hydrateDates(cache.data);
-        return display;
+        return { data: display, isStale: false };
       }
       // Backoff expired — fetch fresh regardless of failure TTL
       return null;
     }
 
     const ttl = cache.data.apiUnavailable ? CACHE_FAILURE_TTL_MS : CACHE_TTL_MS;
-    if (now - cache.timestamp < ttl) {
+    const age = now - cache.timestamp;
+    if (age < ttl) {
       const display = (cache.data.apiError === 'rate-limited' && cache.lastGoodData)
         ? { ...hydrateDates(cache.lastGoodData), apiError: 'rate-limited' as const }
         : hydrateDates(cache.data);
-      return display;
+      // Only mark stale for successful responses; failures have a short TTL already
+      const isStale = !cache.data.apiUnavailable && age >= CACHE_SOFT_TTL_MS;
+      return { data: display, isStale };
     }
 
     return null;
@@ -156,27 +160,31 @@ export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsag
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-export async function getUsage(): Promise<UsageData | null> {
+export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ data: UsageData | null; isStale: boolean }> {
   const now = Date.now();
 
   // Check cache first — serve cached data regardless of env settings
-  const cached = readCache(now);
-  if (cached) return cached;
+  if (!opts?.forceRefresh) {
+    const cached = readCache(now);
+    if (cached) return cached;
+  }
+
+  const none = { data: null, isStale: false } as const;
 
   // Skip fetching if using a non-Anthropic API endpoint
   const baseUrl = (process.env.ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_API_BASE_URL ?? '').trim();
   if (baseUrl) {
     try {
-      if (new URL(baseUrl).origin !== 'https://api.anthropic.com') return null;
-    } catch { return null; }
+      if (new URL(baseUrl).origin !== 'https://api.anthropic.com') return none;
+    } catch { return none; }
   }
 
   // Read credentials
   const creds = readCredentials(now);
-  if (!creds) return null;
+  if (!creds) return none;
 
   const planName = getPlanName(creds.subscriptionType, creds.rateLimitTier);
-  if (!planName) return null; // API user
+  if (!planName) return none; // API user
 
   // Fetch
   const result = await fetchApi(creds.accessToken);
@@ -209,13 +217,14 @@ export async function getUsage(): Promise<UsageData | null> {
         retryAfterUntil: result.retryAfterSec ? now + result.retryAfterSec * 1000 : undefined,
         lastGoodData,
       });
-      return lastGoodData
-        ? { ...hydrateDates(lastGoodData), apiError: 'rate-limited' }
+      const data = lastGoodData
+        ? { ...hydrateDates(lastGoodData), apiError: 'rate-limited' as const }
         : failure;
+      return { data, isStale: false };
     }
 
     writeCache(failure, now);
-    return failure;
+    return { data: failure, isStale: false };
   }
 
   // Parse full response
@@ -233,5 +242,5 @@ export async function getUsage(): Promise<UsageData | null> {
   };
 
   writeCache(usage, now, { lastGoodData: usage, rateLimitedCount: 0 });
-  return usage;
+  return { data: usage, isStale: false };
 }

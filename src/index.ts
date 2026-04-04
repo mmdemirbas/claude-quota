@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { spawn } from 'node:child_process';
 
 const DEBUG = process.env.CLAUDE_QUOTA_DEBUG === '1';
 
@@ -16,6 +17,16 @@ function debugDump(filename: string, data: unknown): void {
     const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, filename), JSON.stringify(data, null, 2), 'utf8');
+  } catch { /* ignore */ }
+}
+
+function spawnBackgroundRefresh(scriptPath: string): void {
+  try {
+    const child = spawn(process.execPath, [scriptPath, '--background'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
   } catch { /* ignore */ }
 }
 
@@ -29,10 +40,12 @@ async function main(): Promise<void> {
       return;
     }
 
-    const [usage, git] = await Promise.all([
+    const [{ data: usage, isStale }, git] = await Promise.all([
       getUsage(),
       stdin.cwd ? Promise.resolve(getGitStatus(stdin.cwd)) : Promise.resolve(null),
     ]);
+
+    if (isStale) spawnBackgroundRefresh(scriptPath);
 
     render({ stdin, usage, git });
   } catch (error) {
@@ -49,7 +62,12 @@ const isSame = (a: string, b: string): boolean => {
   catch { return a === b; }
 };
 if (argvPath && isSame(argvPath, scriptPath)) {
-  void main();
+  if (process.argv.includes('--background')) {
+    // Background refresh: update cache silently, no render
+    void getUsage({ forceRefresh: true });
+  } else {
+    void main();
+  }
 }
 
 export { main };
