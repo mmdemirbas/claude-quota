@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CMD="${1:-help}"
+
+case "$CMD" in
+  build)
+    npm run build
+    ;;
+
+  test)
+    npm test
+    ;;
+
+  lint)
+    npm run lint
+    ;;
+
+  dev)
+    npm run dev
+    ;;
+
+  stdin)
+    npm run test:stdin
+    ;;
+
+  install)
+    npm run build
+    npm link
+    echo "Installed. 'claude-quota' now points to $(pwd)/dist/index.js"
+    ;;
+
+  release)
+    BUMP="${2:-patch}"
+
+    if [[ "$BUMP" != patch && "$BUMP" != minor && "$BUMP" != major ]]; then
+      echo "Usage: ./run release [patch|minor|major]"
+      exit 1
+    fi
+
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+      echo "Error: uncommitted changes — commit or stash first."
+      exit 1
+    fi
+
+    # Bump version in package.json + package-lock.json (no git tag)
+    npm version "$BUMP" --no-git-tag-version
+
+    # Sync version to plugin.json
+    VERSION=$(node -p "require('./package.json').version")
+    node -e "
+      const fs = require('fs');
+      const path = '.claude-plugin/plugin.json';
+      const obj = JSON.parse(fs.readFileSync(path, 'utf8'));
+      obj.version = '$VERSION';
+      fs.writeFileSync(path, JSON.stringify(obj, null, 2) + '\n');
+    "
+
+    # Verify
+    npm run build
+    npm test
+
+    # Commit, push, tag, push tag
+    git add package.json package-lock.json .claude-plugin/plugin.json
+    git commit -m "$VERSION"
+    git push
+    git tag "v$VERSION"
+    git push origin "v$VERSION"
+
+    echo ""
+    echo "Released v$VERSION — npm publish triggered by the v* tag."
+    ;;
+
+  *)
+    echo "Usage: ./run <command>"
+    echo ""
+    echo "  build                    Compile TypeScript"
+    echo "  test                     Run tests"
+    echo "  lint                     Run linter"
+    echo "  dev                      Watch mode (tsc --watch)"
+    echo "  stdin                    Pipe mock stdin and print output"
+  echo "  install                  Build and link as global 'claude-quota' binary"
+    echo "  release [patch|minor|major]  Bump, build, test, commit, push, tag"
+    ;;
+esac

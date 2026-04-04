@@ -18,9 +18,11 @@ src/
 ## Build & Test
 
 ```bash
-npm run build          # tsc → dist/
-npm test               # compile test build + run all unit tests
-npm run test:stdin     # pipe mock JSON to test output
+./run build            # tsc → dist/
+./run test             # compile test build + run all unit tests
+./run stdin            # pipe mock JSON to test output
+./run install          # build + npm link (makes global claude-quota binary point here)
+./run release [patch]  # bump version, build, test, commit, push, tag → triggers npm publish
 ```
 
 ## How the Plugin Works
@@ -29,7 +31,7 @@ npm run test:stdin     # pipe mock JSON to test output
 2. Plugin reads OAuth token from macOS Keychain (`/usr/bin/security find-generic-password`)
 3. Calls `GET api.anthropic.com/api/oauth/usage` with Bearer token
 4. Parses ALL response fields (five_hour, seven_day, seven_day_sonnet, seven_day_opus, extra_usage)
-5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (5 min TTL; 15 s on error; exponential backoff on 429)
+5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (5 min hard TTL; 2 min soft TTL — stale-while-revalidate spawns background refresh; 15 s on error; exponential backoff on 429)
 6. Renders three lines to stdout
 
 ## Key Design Decisions

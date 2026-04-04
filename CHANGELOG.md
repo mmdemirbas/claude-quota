@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.2 — 2026-04-04
+
+### Added
+- Stale-while-revalidate cache: after 2 min a detached background process refreshes usage data so
+  quota metrics stay current during long sessions (hard TTL remains 5 min)
+- `run` script with subcommands: `build`, `test`, `lint`, `dev`, `stdin`, `install`, `release`
+- `./run install` builds and links the repo as the global `claude-quota` binary
+- `./run release [patch|minor|major]` bumps version, builds, tests, commits, pushes, and creates
+  the `v*` tag that triggers npm publish
+
 ## 0.2.1 — 2026-04-04
 
 ### Added

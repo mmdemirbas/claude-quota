@@ -67,12 +67,14 @@ Then configure the statusline in `~/.claude/settings.json`:
 ### Option B: from source
 
 ```bash
-cd ~/.claude/plugins
 git clone https://github.com/mdemirbas/claude-quota.git
 cd claude-quota
 npm install
-npm run build
+./run install
 ```
+
+`./run install` builds the project and links it as the global `claude-quota` binary.
+Subsequent `./run build` calls take effect immediately — no re-install needed.
 
 Configure the statusline:
 
@@ -80,7 +82,7 @@ Configure the statusline:
 {
   "statusLine": {
     "type": "command",
-    "command": "node /path/to/claude-quota/dist/index.js"
+    "command": "claude-quota"
   }
 }
 ```
@@ -96,7 +98,8 @@ Configure the statusline:
 
 1. Claude Code invokes the plugin as a subprocess, piping context JSON on stdin
 2. Plugin reads your OAuth token from macOS Keychain (same credential as Claude Code itself)
-3. Calls `api.anthropic.com/api/oauth/usage` — response is cached 5 min
+3. Calls `api.anthropic.com/api/oauth/usage` — response cached 5 min; after 2 min a background
+   refresh is triggered so data stays current during long sessions
 4. Renders three lines to stdout
 
 ## Replacing claude-hud

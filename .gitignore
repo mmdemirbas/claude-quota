@@ -12,3 +12,7 @@ dist-test/
 # IDE
 .idea/
 .vscode/
+
+# OS
+.DS_Store
+Thumbs.db
