@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Projected-use bar coloring: the empty portion of each quota/money bar is now coloured to
+  communicate end-of-window outlook — red when projected ≥ 100% (quota will be exhausted),
+  gray `·` for wasted area beyond projected usage when projected < 100%
 - Adaptive width rendering: each output line independently degrades through four detail tiers
   (full → no-reset → no-pace → compact) until it fits within the terminal width, with hard
   truncation as a final safety net — prevents garbling on narrow terminals
@@ -13,7 +16,7 @@
 - `src/ansi.ts`: `visibleLength()` and `truncate()` — ANSI-aware string measurement and truncation
 - `src/terminal.ts`: terminal dimension resolution (stderr TTY → `$COLUMNS`/`$LINES` → 120×3)
 - Line 1 git info degrades gracefully: `project + branch*` → `project only` → omitted
-- 150 unit tests (up from 100)
+- 160 unit tests (up from 100)
 
 ### Fixed
 - Rate-limited indicator (⟳) could push output lines 2 chars past the terminal width because

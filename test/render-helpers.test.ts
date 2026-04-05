@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { resetIn, formatMoney } from '../src/render.js';
+import { resetIn, formatMoney, bar } from '../src/render.js';
+import { visibleLength } from '../src/ansi.js';
 
 const now = Date.now();
 
@@ -72,5 +73,86 @@ describe('formatMoney', () => {
     for (const v of [1000, 1500, 9999]) {
       assert.ok(formatMoney(v).length <= 4, `formatMoney(${v}) exceeds 4 chars`);
     }
+  });
+});
+
+// ── bar ───────────────────────────────────────────────────────────────────────
+
+const BLUE = '\x1b[94m';
+const RED = '\x1b[31m';
+const plainColor = (_p: number) => BLUE;
+
+describe('bar (no projected)', () => {
+  test('produces correct visible length', () => {
+    assert.equal(visibleLength(bar(50, 10, plainColor)), 10);
+    assert.equal(visibleLength(bar(0, 10, plainColor)), 10);
+    assert.equal(visibleLength(bar(100, 10, plainColor)), 10);
+  });
+
+  test('0% is all empty chars', () => {
+    const b = bar(0, 10, plainColor).replace(/\x1b\[[0-9;]*m/g, '');
+    assert.equal(b, '░'.repeat(10));
+  });
+
+  test('100% is all filled chars', () => {
+    const b = bar(100, 10, plainColor).replace(/\x1b\[[0-9;]*m/g, '');
+    assert.equal(b, '█'.repeat(10));
+  });
+
+  test('50% has 5 filled and 5 empty chars', () => {
+    const b = bar(50, 10, plainColor).replace(/\x1b\[[0-9;]*m/g, '');
+    assert.equal(b, '█'.repeat(5) + '░'.repeat(5));
+  });
+});
+
+describe('bar (with projected)', () => {
+  // projected >= 100: remaining capacity is in red (will overflow)
+  test('projected=100 — empty portion is red', () => {
+    const b = bar(50, 10, plainColor, 100);
+    // 5 filled + 5 red empty
+    assert.ok(b.includes(RED + '░'.repeat(5)), 'expected red empty chars when projected=100');
+    assert.equal(visibleLength(b), 10);
+  });
+
+  test('projected=150 — empty portion is red', () => {
+    const b = bar(30, 10, plainColor, 150);
+    assert.ok(b.includes(RED), 'expected red when projected > 100');
+    assert.equal(visibleLength(b), 10);
+    // No middle-dot wasted chars
+    assert.ok(!b.replace(/\x1b\[[0-9;]*m/g, '').includes('·'), 'no wasted chars expected when over pace');
+  });
+
+  // projected < 100: empty portion splits at projected boundary
+  // wasted chars (beyond projected) are rendered as '·' in gray
+  test('projected=60, current=30 — wasted chars are · beyond projected position', () => {
+    // 30% filled = 3 █; projected 60% = 6 chars; wasted = chars 7-10 = 4 ·
+    const b = bar(30, 10, plainColor, 60);
+    const plain = b.replace(/\x1b\[[0-9;]*m/g, '');
+    assert.equal(plain.slice(0, 3), '█'.repeat(3), 'filled portion');
+    assert.equal(plain.slice(3, 6), '░'.repeat(3), 'projected-path portion');
+    assert.equal(plain.slice(6),    '·'.repeat(4), 'wasted portion');
+    assert.equal(visibleLength(b), 10);
+    // No red coloring in under-pace scenario
+    assert.ok(!b.includes(RED), 'no red when projected < 100');
+  });
+
+  test('projected=100 exactly fills bar — no wasted chars', () => {
+    const b = bar(50, 10, plainColor, 100);
+    assert.ok(!b.replace(/\x1b\[[0-9;]*m/g, '').includes('·'), 'no wasted chars when projected=100');
+    assert.equal(visibleLength(b), 10);
+  });
+
+  test('projected=0 (all quota wasted) — all empty chars are ·', () => {
+    const b = bar(0, 10, plainColor, 0);
+    const plain = b.replace(/\x1b\[[0-9;]*m/g, '');
+    assert.equal(plain, '·'.repeat(10), 'all wasted when projected=0 and pct=0');
+    assert.equal(visibleLength(b), 10);
+  });
+
+  test('projected=undefined — original behavior, no · chars', () => {
+    const b = bar(50, 10, plainColor, undefined);
+    assert.ok(!b.replace(/\x1b\[[0-9;]*m/g, '').includes('·'));
+    assert.ok(!b.includes(RED));
+    assert.equal(visibleLength(b), 10);
   });
 });

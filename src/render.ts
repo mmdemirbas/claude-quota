@@ -13,6 +13,7 @@ const MAGENTA = '\x1b[35m';
 const CYAN = '\x1b[36m';
 const B_BLUE = '\x1b[94m';
 const B_MAG = '\x1b[95m';
+const GRAY = '\x1b[90m'; // bright black — for wasted quota in bars
 
 const c = (color: string, text: string) => `${color}${text}${R}`;
 const dim = (text: string) => c(DIM, text);
@@ -77,11 +78,37 @@ function moneyValueColor(ratio: number): string {
 
 // ── Bars ────────────────────────────────────────────────────────────────────
 
-function bar(pct: number, width: number, colorFn: (p: number) => string): string {
+/**
+ * Render a progress bar of `width` block characters.
+ *
+ * When `projectedPct` is supplied the empty portion is coloured to convey
+ * the projected end-of-window outcome:
+ *   - projected ≥ 100: empty chars in red  → quota will be exhausted
+ *   - projected < 100: empty chars split at the projected boundary:
+ *       [current → projected]: dim ░   (quota expected to be consumed)
+ *       [projected → 100]:     gray ·  (wasted quota — won't be reached)
+ *
+ * Exported for testing.
+ */
+export function bar(pct: number, width: number, colorFn: (p: number) => string, projectedPct?: number): string {
   const safe = Math.max(0, Math.min(100, pct));
   const filled = Math.round((safe / 100) * width);
   const empty = width - filled;
-  return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(empty)}${R}`;
+
+  if (projectedPct === undefined) {
+    return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(empty)}${R}`;
+  }
+
+  if (projectedPct >= 100) {
+    // Over pace: all remaining quota will be consumed — warn in red
+    return `${colorFn(safe)}${'█'.repeat(filled)}${RED}${'░'.repeat(empty)}${R}`;
+  }
+
+  // Under pace: split empty at the projected boundary
+  const projFilled = Math.min(width, Math.round((projectedPct / 100) * width));
+  const projPath = Math.max(0, projFilled - filled); // will be consumed
+  const wasted = empty - projPath;                   // won't be reached
+  return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(projPath)}${GRAY}${'·'.repeat(wasted)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
@@ -256,14 +283,15 @@ function renderQuota(
     return `${dim(label)} ${quotaColor(pct)}${pctStr}${R}`;
   }
 
-  const b = bar(pct, 10, quotaColor);
+  // Compute pace early so projected% can colour the bar even in no-pace tier
+  const pace = calcPace(pct, resetAt, windowMs, now);
+  const b = bar(pct, 10, quotaColor, pace?.projected);
 
   if (detail === 'no-pace') {
     return `${dim(label)}${b} ${quotaColor(pct)}${pctStr}${R}`;
   }
 
   // pace: 1(space) + 1(glyph) + 4(proj padded) = 6 chars, or 6 spaces
-  const pace = calcPace(pct, resetAt, windowMs, now);
   let paceStr: string;
   if (pace) {
     const projStr = `${pace.projected}%`.padStart(4);
@@ -324,7 +352,13 @@ function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): s
     return `${dim(' ●$:')} ${moneyValueColor(ratio)}${valueStr}${R}`;
   }
 
-  const b = bar(usedPct, 10, moneyBarColor);
+  // Compute pace early so projected% can colour the bar even in no-pace tier
+  const elapsedFraction = monthElapsedFraction(now);
+  const projectedSpend = elapsedFraction >= 0.02 ? usedCredits / elapsedFraction : undefined;
+  const projectedMoneyPct = projectedSpend !== undefined
+    ? Math.round((projectedSpend / monthlyLimit) * 100)
+    : undefined;
+  const b = bar(usedPct, 10, moneyBarColor, projectedMoneyPct);
 
   if (detail === 'no-pace') {
     return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}`;
@@ -332,9 +366,7 @@ function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): s
 
   // pace: 1(space) + 1(glyph) + 4(projected padded) = 6 chars, or 6 spaces
   let paceStr: string;
-  const elapsedFraction = monthElapsedFraction(now);
-  if (elapsedFraction >= 0.02) {
-    const projectedSpend = usedCredits / elapsedFraction;
+  if (projectedSpend !== undefined) {
     const paceRatio = ratio / elapsedFraction;
     const projRatio = projectedSpend / monthlyLimit;
 
