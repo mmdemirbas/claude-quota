@@ -190,9 +190,11 @@ describe('quota rendering', () => {
     assert.ok(line2.includes('│'), 'separator missing between metrics');
   });
 
-  test('reset timer uses ↺ symbol', () => {
+  test('reset timer uses a filled-circle glyph (○◔◑◕●)', () => {
     const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now });
-    assert.ok(line2.includes('↺'), '↺ reset symbol missing');
+    const hasCircle = /[○◔◑◕●]/.test(line2);
+    assert.ok(hasCircle, 'filled-circle reset glyph missing from line2');
+    assert.ok(!line2.includes('↺'), '↺ should no longer appear');
     assert.ok(!line2.includes('↻'), 'old ↻ symbol should not appear');
   });
 
@@ -432,12 +434,12 @@ describe('width-adaptive rendering', () => {
 
   test('line 2 shows reset timer at exactly the full-tier width', () => {
     const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 81 });
-    assert.ok(line2.includes('↺'), 'reset timer should be present at full width');
+    assert.ok(/[○◔◑◕●]/.test(line2), 'reset circle glyph should be present at full width');
   });
 
   test('line 2 drops reset timer one column below full-tier width', () => {
     const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 80 });
-    assert.ok(!line2.includes('↺'), 'reset timer should be dropped below full-tier width');
+    assert.ok(!/[○◔◑◕●]/.test(line2), 'reset circle glyph should be dropped below full-tier width');
     const hasGlyph = line2.includes('↘') || line2.includes('→') || line2.includes('↗');
     assert.ok(hasGlyph, 'pace glyph should still be present in no-reset tier');
   });
@@ -450,7 +452,7 @@ describe('width-adaptive rendering', () => {
 
   test('line 2 drops pace glyph one column below no-reset-tier width', () => {
     const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 66 });
-    assert.ok(!line2.includes('↺'), 'reset timer should be absent');
+    assert.ok(!/[○◔◑◕●]/.test(line2), 'reset circle glyph should be absent');
     const hasGlyph = line2.includes('↘') || line2.includes('→') || line2.includes('↗');
     assert.ok(!hasGlyph, 'pace glyph should be dropped below no-reset-tier width');
     assert.ok(line2.includes('█') || line2.includes('░'), 'bar chars should still be present');

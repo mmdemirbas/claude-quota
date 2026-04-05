@@ -34,6 +34,27 @@ describe('resetIn', () => {
   test('omits hours when exactly on a day boundary', () => {
     assert.equal(resetIn(new Date(now + 2 * 24 * 60 * 60 * 1000), now), '2d');
   });
+
+  // Reset slot is `↺${resetIn(...)}`.padEnd(6) — total visible ≤ 6 chars.
+  // ↺ occupies 1 char, so resetIn must never return more than 5 chars.
+  test('drops minutes when h+m format would exceed 5 chars (double-digit hours + minutes)', () => {
+    // 22h49m = 6 chars — overflows slot. Expected: drop minutes → '22h' (3 chars).
+    assert.equal(resetIn(new Date(now + 22 * 3_600_000 + 49 * 60_000), now), '22h');
+    // 10h10m = 6 chars — overflows. Expected: '10h'.
+    assert.equal(resetIn(new Date(now + 10 * 3_600_000 + 10 * 60_000), now), '10h');
+  });
+
+  test('keeps minutes when h+m format is exactly 5 chars (single-digit hours + any minutes)', () => {
+    // 9h59m = 5 chars — fits. Expected: '9h59m'.
+    assert.equal(resetIn(new Date(now + 9 * 3_600_000 + 59 * 60_000), now), '9h59m');
+    // 10h5m = 5 chars — fits. Expected: '10h5m'.
+    assert.equal(resetIn(new Date(now + 10 * 3_600_000 + 5 * 60_000), now), '10h5m');
+  });
+
+  test('drops hours when d+h format would exceed 5 chars', () => {
+    // 10d15h = 6 chars — overflows. Expected: '10d'.
+    assert.equal(resetIn(new Date(now + 10 * 86_400_000 + 15 * 3_600_000), now), '10d');
+  });
 });
 
 describe('formatMoney', () => {
@@ -118,41 +139,41 @@ describe('bar (with projected)', () => {
     const b = bar(30, 10, plainColor, 150);
     assert.ok(b.includes(RED), 'expected red when projected > 100');
     assert.equal(visibleLength(b), 10);
-    // No middle-dot wasted chars
-    assert.ok(!b.replace(/\x1b\[[0-9;]*m/g, '').includes('·'), 'no wasted chars expected when over pace');
   });
 
   // projected < 100: empty portion splits at projected boundary
-  // wasted chars (beyond projected) are rendered as '·' in gray
-  test('projected=60, current=30 — wasted chars are · beyond projected position', () => {
-    // 30% filled = 3 █; projected 60% = 6 chars; wasted = chars 7-10 = 4 ·
+  // wasted chars (beyond projected) are gray ░ — same glyph, different color
+  test('projected=60, current=30 — wasted chars are gray ░ beyond projected position', () => {
+    // 30% filled = 3 █; projected 60% = 6 chars; wasted = chars 7-10 = 4 ░ (gray)
     const b = bar(30, 10, plainColor, 60);
     const plain = b.replace(/\x1b\[[0-9;]*m/g, '');
     assert.equal(plain.slice(0, 3), '█'.repeat(3), 'filled portion');
-    assert.equal(plain.slice(3, 6), '░'.repeat(3), 'projected-path portion');
-    assert.equal(plain.slice(6),    '·'.repeat(4), 'wasted portion');
+    assert.equal(plain.slice(3, 6), '░'.repeat(3), 'projected-path portion (dim)');
+    assert.equal(plain.slice(6),    '░'.repeat(4), 'wasted portion (gray ░, same glyph)');
     assert.equal(visibleLength(b), 10);
     // No red coloring in under-pace scenario
     assert.ok(!b.includes(RED), 'no red when projected < 100');
   });
 
-  test('projected=100 exactly fills bar — no wasted chars', () => {
+  test('projected=100 exactly fills bar — all empty chars are dim ░, no gray section', () => {
     const b = bar(50, 10, plainColor, 100);
-    assert.ok(!b.replace(/\x1b\[[0-9;]*m/g, '').includes('·'), 'no wasted chars when projected=100');
     assert.equal(visibleLength(b), 10);
+    // When projected=100 the bar tips into the ≥100 branch (red), not the wasted branch
+    assert.ok(b.includes(RED), 'projected=100 triggers red empty (quota will run out)');
   });
 
-  test('projected=0 (all quota wasted) — all empty chars are ·', () => {
+  test('projected=0 (all quota wasted) — all empty chars are gray ░', () => {
     const b = bar(0, 10, plainColor, 0);
     const plain = b.replace(/\x1b\[[0-9;]*m/g, '');
-    assert.equal(plain, '·'.repeat(10), 'all wasted when projected=0 and pct=0');
+    assert.equal(plain, '░'.repeat(10), 'all wasted when projected=0 and pct=0');
     assert.equal(visibleLength(b), 10);
   });
 
-  test('projected=undefined — original behavior, no · chars', () => {
+  test('projected=undefined — original behavior (uniform dim ░)', () => {
     const b = bar(50, 10, plainColor, undefined);
-    assert.ok(!b.replace(/\x1b\[[0-9;]*m/g, '').includes('·'));
     assert.ok(!b.includes(RED));
     assert.equal(visibleLength(b), 10);
+    const plain = b.replace(/\x1b\[[0-9;]*m/g, '');
+    assert.equal(plain, '█'.repeat(5) + '░'.repeat(5));
   });
 });

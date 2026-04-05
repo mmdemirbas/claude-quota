@@ -86,7 +86,7 @@ function moneyValueColor(ratio: number): string {
  *   - projected ≥ 100: empty chars in red  → quota will be exhausted
  *   - projected < 100: empty chars split at the projected boundary:
  *       [current → projected]: dim ░   (quota expected to be consumed)
- *       [projected → 100]:     gray ·  (wasted quota — won't be reached)
+ *       [projected → 100]:     gray ░  (wasted quota — same glyph, dimmer color)
  *
  * Exported for testing.
  */
@@ -107,8 +107,8 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
   // Under pace: split empty at the projected boundary
   const projFilled = Math.min(width, Math.round((projectedPct / 100) * width));
   const projPath = Math.max(0, projFilled - filled); // will be consumed
-  const wasted = empty - projPath;                   // won't be reached
-  return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(projPath)}${GRAY}${'·'.repeat(wasted)}${R}`;
+  const wasted = empty - projPath;                   // won't be reached — same ░ glyph, gray color
+  return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(projPath)}${GRAY}${'░'.repeat(wasted)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
@@ -128,10 +128,18 @@ export function resetIn(resetAt: Date | null, now: number): string {
   if (hours >= 24) {
     const days = Math.floor(hours / 24);
     const remH = hours % 24;
-    return remH > 0 ? `${days}d${remH}h` : `${days}d`;
+    if (remH > 0) {
+      const full = `${days}d${remH}h`;
+      return full.length <= 5 ? full : `${days}d`; // drop hours if they don't fit
+    }
+    return `${days}d`;
   }
 
-  return remMins > 0 ? `${hours}h${remMins}m` : `${hours}h`;
+  if (remMins > 0) {
+    const full = `${hours}h${remMins}m`;
+    return full.length <= 5 ? full : `${hours}h`; // drop minutes if they don't fit
+  }
+  return `${hours}h`;
 }
 
 /** Format fetch timestamp as ⟳HH:MM (local time). Exported for testing. */
@@ -186,6 +194,20 @@ export function calcPace(
   }
 
   return { projected, glyph, glyphColor };
+}
+
+/**
+ * Return a filled-circle glyph showing how far into the quota window we are.
+ *   ○ 0–20%  ◔ 20–40%  ◑ 40–60%  ◕ 60–80%  ● 80–100%
+ * Exported for testing.
+ */
+export function windowGlyph(resetAt: Date | null, windowMs: number, now: number): string {
+  if (!resetAt) return '○';
+  const remaining = resetAt.getTime() - now;
+  if (remaining <= 0) return '●';
+  if (remaining >= windowMs) return '○';
+  const elapsedFraction = (windowMs - remaining) / windowMs;
+  return ['○', '◔', '◑', '◕', '●'][Math.min(4, Math.floor(elapsedFraction * 5))];
 }
 
 /** Day-of-month elapsed fraction for monthly spend pace. */
@@ -304,11 +326,12 @@ function renderQuota(
     return `${dim(label)}${b} ${quotaColor(pct)}${pctStr}${R}${paceStr}`;
   }
 
-  // full: add reset (1(space) + up to 6(↺+time padded to 6) = 7 chars)
+  // full: add reset (1(space) + up to 6(glyph+time padded to 6) = 7 chars)
   const reset = resetIn(resetAt, now);
   let resetStr: string;
   if (reset) {
-    const resetPad = `↺${reset}`.padEnd(6);
+    const glyph = windowGlyph(resetAt, windowMs, now);
+    const resetPad = `${glyph}${reset}`.padEnd(6);
     resetStr = ` ${dim(resetPad)}`;
   } else {
     resetStr = '       '; // 7 spaces

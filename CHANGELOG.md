@@ -4,8 +4,10 @@
 
 ### Added
 - Projected-use bar coloring: the empty portion of each quota/money bar is now coloured to
-  communicate end-of-window outlook — red when projected ≥ 100% (quota will be exhausted),
-  gray `·` for wasted area beyond projected usage when projected < 100%
+  communicate end-of-window outlook — red `░` when projected ≥ 100% (quota will be exhausted),
+  gray `░` for wasted area beyond projected usage when projected < 100%
+- Window-progress glyph: reset countdown symbol `↺` replaced with a filled-circle glyph
+  (`○◔◑◕●`) that shows how far into the quota window the current time is (20% steps)
 - Adaptive width rendering: each output line independently degrades through four detail tiers
   (full → no-reset → no-pace → compact) until it fits within the terminal width, with hard
   truncation as a final safety net — prevents garbling on narrow terminals
@@ -16,7 +18,7 @@
 - `src/ansi.ts`: `visibleLength()` and `truncate()` — ANSI-aware string measurement and truncation
 - `src/terminal.ts`: terminal dimension resolution (stderr TTY → `$COLUMNS`/`$LINES` → 120×3)
 - Line 1 git info degrades gracefully: `project + branch*` → `project only` → omitted
-- 160 unit tests (up from 100)
+- 163 unit tests (up from 100)
 
 ### Fixed
 - Rate-limited indicator (⟳) could push output lines 2 chars past the terminal width because
@@ -25,6 +27,9 @@
 - `formatMoney` produced 5-char strings for sub-dollar amounts (e.g. `$0.50`), overflowing the
   4-char value field in `renderExtraUsage` and breaking column alignment; sub-dollar amounts
   now render as `$.XX` (exactly 4 chars); $1000+ renders as `$Nk`
+- `resetIn` produced strings up to 6 chars (e.g. `22h49m`) which overflowed the 5-char slot
+  in `renderQuota`, shifting the `│` separators on line 3 out of alignment with line 2; minor
+  unit (minutes or hours) is now dropped when the full format would exceed 5 chars
 - CRLF characters in OAuth access token stripped in `parseCredentials` to prevent HTTP header
   injection if the token reaches an Authorization header
 - Non-numeric `expiresAt` in credentials file (e.g. a date string) would bypass expiry check
