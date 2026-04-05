@@ -20,6 +20,11 @@
 - Line 1 git info degrades gracefully: `project + branch*` → `project only` → omitted
 - 163 unit tests (up from 100)
 
+### Changed
+- Cache TTLs reduced: hard TTL 5 min → 2 min; soft TTL 2 min → 45 s. Metrics now stay at most
+  ~45 s stale in active sessions (background refresh triggers after 45 s), and force-refresh
+  after 2 min if the background process silently fails.
+
 ### Fixed
 - Rate-limited indicator (⟳) could push output lines 2 chars past the terminal width because
   it was appended after `fitLine` already sized the line to `cols`; `fitLine` now receives

@@ -5,8 +5,8 @@ import * as https from 'node:https';
 import type { UsageApiResponse, UsageData, ExtraUsageData, CacheFile, ApiError } from './types.js';
 import { readCredentials, getPlanName } from './credentials.js';
 
-const CACHE_TTL_MS = 5 * 60_000;           // 5 min hard TTL (force re-fetch)
-const CACHE_SOFT_TTL_MS = 2 * 60_000;      // 2 min soft TTL (serve stale + background refresh)
+const CACHE_TTL_MS = 2 * 60_000;           // 2 min hard TTL (force re-fetch)
+const CACHE_SOFT_TTL_MS = 45_000;          // 45s soft TTL (serve stale + background refresh)
 const CACHE_FAILURE_TTL_MS = 15_000;        // 15s for failures
 const CACHE_RATE_LIMITED_BASE_MS = 60_000;   // 60s base for 429 backoff
 const CACHE_RATE_LIMITED_MAX_MS = 5 * 60_000;
