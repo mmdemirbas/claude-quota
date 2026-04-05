@@ -13,12 +13,20 @@
 - `src/ansi.ts`: `visibleLength()` and `truncate()` — ANSI-aware string measurement and truncation
 - `src/terminal.ts`: terminal dimension resolution (stderr TTY → `$COLUMNS`/`$LINES` → 120×3)
 - Line 1 git info degrades gracefully: `project + branch*` → `project only` → omitted
-- 143 unit tests (up from 100)
+- 150 unit tests (up from 100)
 
 ### Fixed
 - Rate-limited indicator (⟳) could push output lines 2 chars past the terminal width because
   it was appended after `fitLine` already sized the line to `cols`; `fitLine` now receives
   `cols − syncHintWidth` so the combined output never wraps
+- `formatMoney` produced 5-char strings for sub-dollar amounts (e.g. `$0.50`), overflowing the
+  4-char value field in `renderExtraUsage` and breaking column alignment; sub-dollar amounts
+  now render as `$.XX` (exactly 4 chars); $1000+ renders as `$Nk`
+- CRLF characters in OAuth access token stripped in `parseCredentials` to prevent HTTP header
+  injection if the token reaches an Authorization header
+- Non-numeric `expiresAt` in credentials file (e.g. a date string) would bypass expiry check
+  via NaN comparison; guarded with `typeof expiresAt !== 'number'`
+- Cache file symlink attack: `writeCache` now refuses to write through a symbolic link
 
 ## 0.2.2 — 2026-04-04
 

@@ -74,7 +74,7 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
   try {
     const dir = getPluginDir();
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true });
 
     const cachePath = getCachePath();
     // Refuse to write through a symlink — prevents an attacker with home-dir write access

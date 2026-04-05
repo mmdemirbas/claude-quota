@@ -289,11 +289,19 @@ function renderQuota(
   return `${dim(label)}${b} ${quotaColor(pct)}${pctStr}${R}${paceStr}${resetStr}`;
 }
 
-/** Exported for testing. */
+/**
+ * Format a dollar amount to at most 4 visible chars, for use with padStart(4).
+ * - $0          → "$0"    (2 chars)
+ * - $0.01–$0.99 → "$.XX"  (4 chars, preserves cent precision)
+ * - $1–$999     → "$NNN"  (2–4 chars)
+ * - $1000+      → "$Nk"   (3–4 chars)
+ * Exported for testing.
+ */
 export function formatMoney(amount: number): string {
   if (amount === 0) return '$0';
-  if (amount < 1)   return `$${amount.toFixed(2)}`;
-  return `$${Math.round(amount)}`;
+  if (amount < 1)   return `$.${Math.round(amount * 100).toString().padStart(2, '0')}`;
+  if (amount < 1000) return `$${Math.round(amount)}`;
+  return `$${Math.round(amount / 1000)}k`;
 }
 
 /**
