@@ -3,6 +3,7 @@ import { readStdin } from './stdin.js';
 import { getUsage } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
+import { terminalDims } from './terminal.js';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -47,7 +48,8 @@ async function main(): Promise<void> {
 
     if (isStale) spawnBackgroundRefresh(scriptPath);
 
-    render({ stdin, usage, git });
+    const { columns, rows } = terminalDims(stdin);
+    render({ stdin, usage, git, columns, rows });
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.log(`[claude-quota] Error: ${msg}`);

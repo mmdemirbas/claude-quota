@@ -15,6 +15,10 @@ export interface StdinData {
   };
   cwd?: string;
   transcript_path?: string;
+  /** Terminal width in columns — may be provided by Claude Code in a future version. */
+  columns?: number;
+  /** Terminal height in rows — may be provided by Claude Code in a future version. */
+  rows?: number;
 }
 
 /** Full usage API response from api.anthropic.com/api/oauth/usage */
