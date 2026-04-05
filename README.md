@@ -11,8 +11,8 @@ more visiting the usage page.
 
 ```
 sonnet high │ ctx:██░░░░░░░░  23% │ lakelab git:(main*)
-max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d:██░░░░░░░░  23% ↘  76% ↺4d20h
-⟳18:01      │ snt:██████░░░░  63% → 91% ↺2d3h  │  ●$:░░░░░░░░░░   $0 ↘  $0 /$5
+max 5x      │  5h:██░░░░░░░░  17% ↗139% ◔3h56m │  7d:██░░░░░░░░  23% ↘  76% ◔4d20h
+⟳18:01      │ snt:██████░░░░  63% → 91% ◕2d3h  │  ●$:░░░░░░░░░░   $0 ↘  $0 /$5
 ```
 
 ### Segments
@@ -35,7 +35,7 @@ max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d
 | `█████░░░░░`                    | 10-char bar per metric                                                                  |
 | ` 17%`                          | Current utilization, right-justified to 4 chars                                         |
 | `↘ 32%` / `→ 90%` / `↗140%`     | Pace glyph + projected end-of-window utilization; >100% means you will exceed the quota |
-| `↺3h56m`                        | Time until quota resets                                                                 |
+| `◔3h56m`                        | Time until quota resets; glyph shows window progress: `○◔◑◕●` = 0→100% elapsed         |
 | `⟳18:01`                        | Local time of last usage data fetch (shown in col-0 of line 3)                          |
 | `●$:` / `○$:`                   | Extra usage enabled (`●`) or disabled (`○`)                                             |
 | `  $0 ↘  $0 /$5`                | Current spend · pace glyph · projected · monthly limit (all fixed-width, aligned)       |
@@ -43,7 +43,8 @@ max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d
 ### Color coding
 
 - **Context bar**: green < 70% → yellow 70–85% → red ≥ 85%
-- **Quota bars**: blue < 75% → magenta 75–90% → red ≥ 90%
+- **Quota bars (filled `█`)**: blue < 75% → magenta 75–90% → red ≥ 90%
+- **Quota bars (empty `░`)**: dim = projected path · gray = wasted quota (projected < 100%) · red = quota will run out (projected ≥ 100%)
 - **Pace glyph**: green `↘` under-pace · dim `→` on-pace · yellow/red `↗` over-pace
 - **Projected**: dim ≤ 79% · yellow 80–100% · red > 100%
 - **Money**: green $0 · yellow > $0 · red ≥ 80% of limit
@@ -101,8 +102,8 @@ Configure the statusline:
 
 1. Claude Code invokes the plugin as a subprocess, piping context JSON on stdin
 2. Plugin reads your OAuth token from macOS Keychain (same credential as Claude Code itself)
-3. Calls `api.anthropic.com/api/oauth/usage` — response cached 5 min; after 2 min a background
-   refresh is triggered so data stays current during long sessions
+3. Calls `api.anthropic.com/api/oauth/usage` — response cached 2 min (hard TTL); after 45 s a
+   background refresh is triggered so data stays current during long sessions
 4. Renders 1–3 lines to stdout, adapting to terminal width and height
 
 ## Adaptive layout

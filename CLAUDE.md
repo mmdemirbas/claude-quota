@@ -33,7 +33,7 @@ src/
 2. Plugin reads OAuth token from macOS Keychain (`/usr/bin/security find-generic-password`)
 3. Calls `GET api.anthropic.com/api/oauth/usage` with Bearer token
 4. Parses ALL response fields (five_hour, seven_day, seven_day_sonnet, seven_day_opus, extra_usage)
-5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (5 min hard TTL; 2 min soft TTL — stale-while-revalidate spawns background refresh; 15 s on error; exponential backoff on 429)
+5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (2 min hard TTL; 45 s soft TTL — stale-while-revalidate spawns background refresh; 15 s on error; exponential backoff on 429)
 6. Renders 1–3 lines to stdout (adaptive to terminal height and width)
 
 ## Key Design Decisions
@@ -48,7 +48,9 @@ src/
   - no-pace (19): drop pace glyph + projected%
   - compact (9): drop bar, show label + pct only
 - **Terminal dimensions**: resolved from `process.stderr` (stays TTY when stdout is piped) → `$COLUMNS`/`$LINES` env vars → defaults (120×3)
-- **Pace indicators**: each quota shows current%, directional glyph (↘/→/↗), projected%, and reset countdown
+- **Pace indicators**: each quota shows current%, directional glyph (↘/→/↗), and projected end-of-window utilization
+- **Projected-use bar coloring**: empty `░` chars in the bar are coloured by outcome — dim for the projected-to-be-consumed portion, gray for wasted quota (projected < 100%), red when quota will run out (projected ≥ 100%)
+- **Window-progress glyph**: `○◔◑◕●` replaces `↺` in the reset slot, showing how far into the quota window the current time is (20% steps per glyph)
 - **Fixed-width columns**: all quota segments (label, bar, value, pace, reset/limit) use the same char widths so glyphs align across lines
 - **Fetch time**: `fetchedAt` stored in `UsageData`, rendered as `⟳HH:MM` in the col-0 of line 3 (exact local time, not relative — stays accurate without per-second refresh)
 - **Full API parsing**: unlike claude-hud, we parse seven_day_sonnet, seven_day_opus, extra_usage
