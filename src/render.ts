@@ -435,6 +435,10 @@ export function render(input: RenderInput): void {
 
   if (usage && !usage.apiUnavailable) {
     const syncHint = usage.apiError === 'rate-limited' ? dim(' ⟳') : '';
+    // visibleLength(syncHint) = 2 when rate-limited, 0 otherwise.
+    // fitLine is called with cols reduced by this amount so that appending
+    // syncHint never pushes the output line past the terminal width.
+    const syncW = visibleLength(syncHint);
 
     if (rows === 2) {
       // Flatten all quotas onto a single line.
@@ -452,7 +456,7 @@ export function render(input: RenderInput): void {
             renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
             renderExtraUsage(usage, now, detail),
           ],
-          cols,
+          cols - syncW,
         );
         console.log(`${R}${line2}${syncHint}`);
       } else if (usage.apiError === 'rate-limited') {
@@ -460,24 +464,23 @@ export function render(input: RenderInput): void {
       }
     } else {
       // rows ≥ 3: standard two-account-line layout.
+      // hasLine3 is needed before line 2 is built so we know where syncHint lands.
+      const hasLine3 = usage.sonnet !== null || usage.opus !== null || usage.extraUsage !== null;
       const line2HasContent = usage.fiveHour !== null || usage.sevenDay !== null || !!planText;
       if (line2HasContent) {
+        // syncHint goes on line 2 only when there is no line 3.
         const line2 = fitLine(
           (detail) => [
             planText ? pad0(planText, CYAN) : null,
             renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
             renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
           ],
-          cols,
+          cols - (hasLine3 ? 0 : syncW),
         );
-        const hasLine3 =
-          usage.sonnet !== null || usage.opus !== null || usage.extraUsage !== null;
         console.log(`${R}${line2}${hasLine3 ? '' : syncHint}`);
       }
 
-      const hasLine3Content =
-        usage.sonnet !== null || usage.opus !== null || usage.extraUsage !== null;
-      if (hasLine3Content) {
+      if (hasLine3) {
         const col0Str = (planText && usage.fetchedAt)
           ? pad0(formatFetchTime(usage.fetchedAt), DIM)
           : ' '.repeat(col0Width);
@@ -488,7 +491,7 @@ export function render(input: RenderInput): void {
             renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
             renderExtraUsage(usage, now, detail),
           ],
-          cols,
+          cols - syncW,
         );
         console.log(`${R}${line3}${syncHint}`);
       } else if (!planText && !line2HasContent && usage.apiError === 'rate-limited') {

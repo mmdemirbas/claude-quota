@@ -503,3 +503,183 @@ describe('width-adaptive rendering', () => {
     }
   });
 });
+
+// ── line 3 width-adaptive rendering ───────────────────────────────────────
+//
+// Thresholds for line 3 with snt + extra usage (opus=null):
+//   col0Width = 11, each quota tier width: full=32, no-reset=25, no-pace=19, compact=9
+//   SEP = 3
+//
+//   full:      11+3+32+3+32 = 81  (snt full + extra full; includes /$limit)
+//   no-reset:  11+3+25+3+25 = 67  (/$limit dropped; pace glyph kept)
+//   no-pace:   11+3+19+3+19 = 55  (pace glyph dropped; bars kept)
+//   compact:   11+3+ 9+3+ 9 = 35  (bars dropped; label+value only)
+
+const usageWithExtra: UsageData = {
+  ...baseUsage,
+  extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50 },
+  fetchedAt: now,
+};
+
+describe('line 3 width-adaptive rendering', () => {
+  test('shows monthly limit in line 3 at exactly the full-tier width', () => {
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 81 });
+    assert.ok(line3.includes('/$500'), 'monthly limit should be present at full-tier width');
+  });
+
+  test('drops monthly limit in line 3 one column below full-tier width', () => {
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 80 });
+    assert.ok(!line3.includes('/$500'), 'monthly limit should be dropped below full-tier width');
+    const hasGlyph = line3.includes('↘') || line3.includes('→') || line3.includes('↗');
+    assert.ok(hasGlyph, 'pace glyph should still be present in no-reset tier');
+  });
+
+  test('shows pace glyph in line 3 at exactly the no-reset-tier width', () => {
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 67 });
+    const hasGlyph = line3.includes('↘') || line3.includes('→') || line3.includes('↗');
+    assert.ok(hasGlyph, 'pace glyph should be present at no-reset-tier width');
+  });
+
+  test('drops pace glyph in line 3 one column below no-reset-tier width', () => {
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 66 });
+    const hasGlyph = line3.includes('↘') || line3.includes('→') || line3.includes('↗');
+    assert.ok(!hasGlyph, 'pace glyph should be dropped below no-reset-tier width');
+    assert.ok(line3.includes('█') || line3.includes('░'), 'bar chars should still be present');
+  });
+
+  test('no line 3 exceeds column width (invariant with extra usage enabled)', () => {
+    // Extra usage widens line 3 to 81 at full tier; test all tier boundaries.
+    const widths = [20, 35, 55, 66, 67, 80, 81, 120];
+    for (const columns of widths) {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.join(' '));
+      render({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns });
+      console.log = orig;
+      for (const line of lines) {
+        const visible = vlen(line);
+        assert.ok(
+          visible <= columns,
+          `line visible length ${visible} exceeds columns=${columns}: "${line.replace(/\x1b\[[0-9;]*m/g, '')}"`,
+        );
+      }
+    }
+  });
+});
+
+// ── git dirty-marker degradation ──────────────────────────────────────────
+//
+// With git { branch: 'main', isDirty: true }:
+//   renderGit full:    "my-project git:(main*)"  = 22 visible chars
+//   Line 1 full:       11+3+19+3+22 = 58
+//   renderGit no-pace: "my-project"              = 10 visible chars
+//   Line 1 no-pace:    11+3+19+3+10 = 46
+
+describe('git dirty-marker degradation', () => {
+  const dirtyGit = { branch: 'main', isDirty: true };
+
+  test('dirty marker and branch present at full-tier width', () => {
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: dirtyGit, now, columns: 58 });
+    assert.ok(line1.includes('main*'), 'dirty branch should appear at full-tier width');
+  });
+
+  test('dirty marker absent when branch is dropped at no-pace tier', () => {
+    // At columns=57, full (58) > 57 and no-reset (58) > 57, so no-pace (46) is used.
+    // no-pace renders project only — branch and dirty marker must not appear.
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: dirtyGit, now, columns: 57 });
+    assert.ok(line1.includes('my-project'), 'project should still appear');
+    assert.ok(!line1.includes('main'), 'branch should not appear at no-pace tier');
+    assert.ok(!line1.includes('*'), 'dirty marker must not appear without branch');
+  });
+});
+
+// ── height-adaptive edge cases ─────────────────────────────────────────────
+
+describe('height-adaptive edge cases', () => {
+  test('rows=1 omits 5h when fiveHour is null, keeps 7d', () => {
+    const noFiveHour: UsageData = { ...baseUsage, fiveHour: null, fiveHourResetAt: null };
+    const { line1 } = capture({ stdin: baseStdin, usage: noFiveHour, git: null, now, rows: 1 });
+    assert.ok(!line1.includes('5h:'), '5h segment should be absent when null');
+    assert.ok(line1.includes('7d:'), '7d segment should still be present');
+  });
+
+  test('rows=1 shows only model and ctx when both quotas are null', () => {
+    const noQuotas: UsageData = {
+      ...baseUsage, fiveHour: null, fiveHourResetAt: null,
+      sevenDay: null, sevenDayResetAt: null,
+    };
+    const { line1 } = capture({ stdin: baseStdin, usage: noQuotas, git: null, now, rows: 1 });
+    assert.ok(line1.includes('sonnet'), 'model name must appear');
+    assert.ok(line1.includes('ctx:'), 'ctx label must appear');
+    assert.ok(!line1.includes('5h:'), '5h should not appear');
+    assert.ok(!line1.includes('7d:'), '7d should not appear');
+  });
+
+  test('rows=1 when usage is null falls back to ctx-bar format (no quota info)', () => {
+    // Without usage data the single line uses the multi-row line-1 format
+    // (ctx bar present) rather than the compact quota format.
+    const { line1 } = capture({ stdin: baseStdin, usage: null, git: null, now, rows: 1 });
+    assert.ok(line1.includes('ctx:'), 'ctx label must appear');
+    assert.ok(line1.includes('█'), 'ctx bar should be present when usage is null');
+    assert.ok(!line1.includes('5h:'), '5h should not appear without usage data');
+  });
+
+  test('rows=2 appends rate-limited indicator to the merged quota line', () => {
+    const rateLimited: UsageData = { ...baseUsage, apiError: 'rate-limited' };
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    render({ stdin: baseStdin, usage: rateLimited, git: null, now, rows: 2 });
+    console.log = orig;
+    assert.equal(lines.length, 2, 'should produce exactly 2 lines');
+    const line2 = lines[1]?.replace(/\x1b\[[0-9;]*m/g, '') ?? '';
+    assert.ok(line2.includes('⟳'), 'rate-limited indicator must be on line 2 at rows=2');
+  });
+
+  test('rows=2 width invariant (merged line never exceeds columns)', () => {
+    // rows=2 merged line: plan + 5h + 7d + snt — wider than individual lines at rows=3.
+    // With baseUsage (opus=null, extra=null):
+    //   full:     11+3+32+3+32+3+32 = 116
+    //   no-reset: 11+3+25+3+25+3+25 =  95
+    //   no-pace:  11+3+19+3+19+3+19 =  77
+    //   compact:  11+3+ 9+3+ 9+3+ 9 =  47
+    const widths = [20, 47, 55, 77, 80, 95, 116, 120];
+    for (const columns of widths) {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.join(' '));
+      render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2, columns });
+      console.log = orig;
+      for (const line of lines) {
+        const visible = vlen(line);
+        assert.ok(
+          visible <= columns,
+          `rows=2 line visible length ${visible} exceeds columns=${columns}: "${line.replace(/\x1b\[[0-9;]*m/g, '')}"`,
+        );
+      }
+    }
+  });
+
+  test('rate-limited indicator never pushes any line past the terminal width', () => {
+    // Before the syncHint fix, fitLine sized the line to `cols` and then
+    // syncHint (' ⟳', 2 visible chars) was appended — causing overflow.
+    const rateLimited: UsageData = { ...baseUsage, apiError: 'rate-limited' };
+    const widths = [35, 55, 67, 81, 95, 120];
+    for (const columns of widths) {
+      for (const rows of [2, 3] as const) {
+        const lines: string[] = [];
+        const orig = console.log;
+        console.log = (...args: unknown[]) => lines.push(args.join(' '));
+        render({ stdin: baseStdin, usage: rateLimited, git: null, now, columns, rows });
+        console.log = orig;
+        for (const line of lines) {
+          const visible = vlen(line);
+          assert.ok(
+            visible <= columns,
+            `rate-limited line visible length ${visible} exceeds columns=${columns} at rows=${rows}: "${line.replace(/\x1b\[[0-9;]*m/g, '')}"`,
+          );
+        }
+      }
+    }
+  });
+});

@@ -30,6 +30,14 @@ describe('visibleLength', () => {
     assert.equal(visibleLength('████░░░░░░'), 10);
     assert.equal(visibleLength('↘↗→↺⟳│'), 6);
   });
+
+  test('strips multi-parameter SGR codes like bold+red \\x1b[1;31m', () => {
+    assert.equal(visibleLength('\x1b[1;31mhello\x1b[0m'), 5);
+  });
+
+  test('strips bare reset \\x1b[m (no parameter variant)', () => {
+    assert.equal(visibleLength('\x1b[31mhi\x1b[m'), 2);
+  });
 });
 
 // ── truncate ──────────────────────────────────────────────────────────────────
@@ -74,5 +82,26 @@ describe('truncate', () => {
 
   test('empty string is returned unchanged', () => {
     assert.equal(truncate('', 5), '');
+  });
+
+  test('returns empty string for negative max', () => {
+    assert.equal(truncate('hello', -1), '');
+    assert.equal(truncate('hello', -100), '');
+  });
+
+  test('handles multi-parameter SGR code within kept portion', () => {
+    // \x1b[1;31m is bold+red (2 visible chars: 'hi'), then reset
+    const s = '\x1b[1;31mhello\x1b[0m';
+    const cut = truncate(s, 3);
+    assert.equal(visibleLength(cut), 3);
+    assert.ok(cut.endsWith('\x1b[0m'), 'reset should be appended after cut mid-color');
+  });
+
+  test('bare reset \\x1b[m correctly closes color tracking', () => {
+    // Color closed by bare reset before cut point → no extra reset needed
+    const s = '\x1b[31mhel\x1b[mworld';
+    const cut = truncate(s, 6);
+    assert.equal(cut, '\x1b[31mhel\x1b[mwor');
+    assert.equal(visibleLength(cut), 6);
   });
 });
