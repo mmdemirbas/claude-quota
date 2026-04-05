@@ -13,7 +13,8 @@ export interface Credentials {
   rateLimitTier?: string;
 }
 
-interface CredentialsFile {
+/** Exported for testing. */
+export interface CredentialsFile {
   claudeAiOauth?: {
     accessToken?: string;
     refreshToken?: string;
@@ -43,12 +44,16 @@ function getServiceNames(): string[] {
   return [`${KEYCHAIN_SERVICE}-${hash}`, KEYCHAIN_SERVICE];
 }
 
-function parseCredentials(data: CredentialsFile, now: number): Credentials | null {
-  const token = data.claudeAiOauth?.accessToken;
+/** Exported for testing. */
+export function parseCredentials(data: CredentialsFile, now: number): Credentials | null {
+  // Strip CRLF to prevent HTTP header injection if the token is ever used in an Authorization header
+  const token = data.claudeAiOauth?.accessToken?.replace(/[\r\n]/g, '');
   if (!token) return null;
 
   const expiresAt = data.claudeAiOauth?.expiresAt;
-  if (expiresAt != null && expiresAt <= now) return null;
+  // Guard against type confusion: a non-numeric expiresAt (e.g. a date string) would produce
+  // NaN in the <= comparison and silently bypass expiry. Treat non-numbers as expired.
+  if (expiresAt != null && (typeof expiresAt !== 'number' || expiresAt <= now)) return null;
 
   return {
     accessToken: token,

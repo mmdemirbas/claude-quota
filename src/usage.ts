@@ -76,8 +76,15 @@ function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile
     const dir = getPluginDir();
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+    const cachePath = getCachePath();
+    // Refuse to write through a symlink — prevents an attacker with home-dir write access
+    // from redirecting the cache file to an arbitrary path (symlink attack).
+    try {
+      if (fs.lstatSync(cachePath).isSymbolicLink()) return;
+    } catch { /* file does not exist yet — fine to create */ }
+
     const cache: CacheFile = { data, timestamp, ...opts };
-    fs.writeFileSync(getCachePath(), JSON.stringify(cache), 'utf8');
+    fs.writeFileSync(cachePath, JSON.stringify(cache), 'utf8');
   } catch { /* ignore */ }
 }
 
