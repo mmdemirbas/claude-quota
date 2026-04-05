@@ -493,8 +493,8 @@ export function render(input: RenderInput): void {
   // ── Lines 2 & 3: account ──────────────────────────────────────────────────
   // rows=2 layout:  plan │ 5h │ 7d │ snt │ ops │ $  (all quotas on one line)
   // rows≥3 layout:
-  //   Line 2: plan │  5h bar pct% pace reset │  7d bar pct% pace reset
-  //   Line 3: time │ snt bar pct% pace reset │  ●$ bar val  pace limit
+  //   Line 2: plan │  5h bar pct% pace reset │ snt bar pct% pace reset
+  //   Line 3: time │  7d bar pct% pace reset │  ●$ bar val  pace limit
 
   if (usage && !usage.apiUnavailable) {
     const syncHint = usage.apiError === 'rate-limited' ? dim(' ⟳') : '';
@@ -528,15 +528,15 @@ export function render(input: RenderInput): void {
     } else {
       // rows ≥ 3: standard two-account-line layout.
       // hasLine3 is needed before line 2 is built so we know where syncHint lands.
-      const hasLine3 = usage.sonnet !== null || usage.opus !== null || usage.extraUsage !== null;
-      const line2HasContent = usage.fiveHour !== null || usage.sevenDay !== null || !!planText;
+      const hasLine3 = usage.sevenDay !== null || usage.opus !== null || usage.extraUsage !== null;
+      const line2HasContent = usage.fiveHour !== null || usage.sonnet !== null || !!planText;
       if (line2HasContent) {
         // syncHint goes on line 2 only when there is no line 3.
         const line2 = fitLine(
           (detail) => [
             planText ? pad0(planText, CYAN) : null,
             renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
-            renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
+            renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
           ],
           cols - (hasLine3 ? 0 : syncW),
         );
@@ -550,7 +550,7 @@ export function render(input: RenderInput): void {
         const line3 = fitLine(
           (detail) => [
             planText ? col0Str : null,
-            renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
+            renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
             renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
             renderExtraUsage(usage, now, detail),
           ],

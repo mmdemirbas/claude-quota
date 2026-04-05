@@ -198,38 +198,41 @@ describe('quota rendering', () => {
     assert.ok(!line2.includes('↻'), 'old ↻ symbol should not appear');
   });
 
-  test('line 2 has 5h and 7d labels and values', () => {
+  test('line 2 has 5h and snt labels and values', () => {
     const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now });
     assert.ok(line2.includes('5h:'), '5h label missing from line2');
     assert.ok(line2.includes('36%'), '5h value missing from line2');
-    assert.ok(line2.includes('7d:'), '7d label missing from line2');
-    assert.ok(line2.includes('18%'), '7d value missing from line2');
+    assert.ok(line2.includes('snt:'), 'snt label missing from line2');
+    assert.ok(line2.includes('56%'), 'snt value missing from line2');
   });
 
-  test('line 3 has sonnet label and value', () => {
+  test('line 3 has 7d label and value', () => {
     const { line3 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now });
-    assert.ok(line3.includes('snt:'), 'sonnet label missing from line3');
-    assert.ok(line3.includes('56%'), 'sonnet value missing from line3');
+    assert.ok(line3.includes('7d:'), '7d label missing from line3');
+    assert.ok(line3.includes('18%'), '7d value missing from line3');
   });
 
   test('pace glyph and projected value appear after usage %', () => {
-    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now });
+    const { line2, line3 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now });
     // 5h: 36% used, 2h elapsed of 5h (40%) → projected = round(36/0.4) = 90%
     //     paceRatio = 36/(0.40×100) = 0.90 → on-pace band → →
     // projected "90%" is padded to " 90%" so it appears as "→ 90%"
     assert.ok(line2.includes('→ 90%'), '5h pace+projected missing');
+    // snt: 56% used, 4d elapsed of 7d (~57%) → projected = round(56/0.5714) = 98%
+    //      paceRatio = 56/(0.57×100) = 0.98 → on-pace → →
+    assert.ok(line2.includes('→ 98%'), 'snt pace+projected missing');
     // 7d: 18% used, 4d elapsed of 7d (~57%) → projected = 32%
     //     paceRatio = 18/(0.57×100) = 0.32 → under pace → ↘
     // projected "32%" is padded to " 32%" so it appears as "↘ 32%"
-    assert.ok(line2.includes('↘ 32%'), '7d pace+projected missing');
+    assert.ok(line3.includes('↘ 32%'), '7d pace+projected missing');
   });
 
   test('over-pace shows ↗ and projected > 100%', () => {
     const overPace: UsageData = { ...baseUsage, sevenDay: 80, sevenDayResetAt: in3d };
-    const { line2 } = capture({ stdin: baseStdin, usage: overPace, git: null, now });
+    const { line3 } = capture({ stdin: baseStdin, usage: overPace, git: null, now });
     // 80% used, 4d/7d elapsed → projected = round(80/0.571) = 140%
     // "140%" is already 4 chars, no extra padding needed → "↗140%"
-    assert.ok(line2.includes('↗140%'), 'over-pace indicator missing');
+    assert.ok(line3.includes('↗140%'), 'over-pace indicator missing');
   });
 
   test('no pace glyph when window just started', () => {
@@ -239,7 +242,7 @@ describe('quota rendering', () => {
       fiveHourResetAt: new Date(now + 5 * 60 * 60 * 1000 - 3000), // 3s elapsed
     };
     const { line2 } = capture({ stdin: baseStdin, usage: justReset, git: null, now });
-    const fhSection = line2.split('7d:')[0];
+    const fhSection = line2.split('snt:')[0];
     assert.ok(!fhSection.includes('↘') && !fhSection.includes('↗'), 'no pace expected this early');
   });
 
@@ -334,12 +337,12 @@ describe('height-adaptive rendering', () => {
     assert.ok(line3 !== '', 'line 3 must be present');
   });
 
-  test('rows=3 line 2 has 5h and 7d only; line 3 has snt', () => {
+  test('rows=3 line 2 has 5h and snt only; line 3 has 7d', () => {
     const { line2, line3 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 3 });
     assert.ok(line2.includes('5h:'), '5h should be on line 2');
-    assert.ok(line2.includes('7d:'), '7d should be on line 2');
-    assert.ok(!line2.includes('snt:'), 'snt should not be on line 2 at rows=3');
-    assert.ok(line3.includes('snt:'), 'snt should be on line 3 at rows=3');
+    assert.ok(line2.includes('snt:'), 'snt should be on line 2');
+    assert.ok(!line2.includes('7d:'), '7d should not be on line 2 at rows=3');
+    assert.ok(line3.includes('7d:'), '7d should be on line 3 at rows=3');
   });
 
   test('rows=2 produces exactly two lines', () => {
@@ -421,7 +424,7 @@ describe('height-adaptive rendering', () => {
 //     no-pace:         11+3+19+3+10 = 46  (git = "my-project" = 10)
 //     compact:         11+3+19      = 33  (git omitted)
 //
-//   Line 2 (plan │ 5h │ 7d), each quota at each tier:
+//   Line 2 (plan │ 5h │ snt), each quota at each tier:
 //     full:      11+3+32+3+32 = 81
 //     no-reset:  11+3+25+3+25 = 67
 //     no-pace:   11+3+19+3+19 = 55
@@ -463,7 +466,7 @@ describe('width-adaptive rendering', () => {
     const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 35 });
     assert.ok(!line2.includes('█') && !line2.includes('░'), 'bar chars should be absent in compact tier');
     assert.ok(line2.includes('36%'), '5h percentage must still be visible');
-    assert.ok(line2.includes('18%'), '7d percentage must still be visible');
+    assert.ok(line2.includes('56%'), 'snt percentage must still be visible');
   });
 
   // ── line 1 git degradation ──────────────────────────────────────────────
@@ -508,11 +511,11 @@ describe('width-adaptive rendering', () => {
 
 // ── line 3 width-adaptive rendering ───────────────────────────────────────
 //
-// Thresholds for line 3 with snt + extra usage (opus=null):
+// Thresholds for line 3 with 7d + extra usage (opus=null):
 //   col0Width = 11, each quota tier width: full=32, no-reset=25, no-pace=19, compact=9
 //   SEP = 3
 //
-//   full:      11+3+32+3+32 = 81  (snt full + extra full; includes /$limit)
+//   full:      11+3+32+3+32 = 81  (7d full + extra full; includes /$limit)
 //   no-reset:  11+3+25+3+25 = 67  (/$limit dropped; pace glyph kept)
 //   no-pace:   11+3+19+3+19 = 55  (pace glyph dropped; bars kept)
 //   compact:   11+3+ 9+3+ 9 = 35  (bars dropped; label+value only)
