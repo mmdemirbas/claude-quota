@@ -13,6 +13,12 @@
 - `src/ansi.ts`: `visibleLength()` and `truncate()` — ANSI-aware string measurement and truncation
 - `src/terminal.ts`: terminal dimension resolution (stderr TTY → `$COLUMNS`/`$LINES` → 120×3)
 - Line 1 git info degrades gracefully: `project + branch*` → `project only` → omitted
+- 143 unit tests (up from 100)
+
+### Fixed
+- Rate-limited indicator (⟳) could push output lines 2 chars past the terminal width because
+  it was appended after `fitLine` already sized the line to `cols`; `fitLine` now receives
+  `cols − syncHintWidth` so the combined output never wraps
 
 ## 0.2.2 — 2026-04-04
 
