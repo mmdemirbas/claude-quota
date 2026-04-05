@@ -103,7 +103,32 @@ Configure the statusline:
 2. Plugin reads your OAuth token from macOS Keychain (same credential as Claude Code itself)
 3. Calls `api.anthropic.com/api/oauth/usage` — response cached 5 min; after 2 min a background
    refresh is triggered so data stays current during long sessions
-4. Renders three lines to stdout
+4. Renders 1–3 lines to stdout, adapting to terminal width and height
+
+## Adaptive layout
+
+The output adapts to the terminal width and height so it never wraps or garbles.
+
+**Height tiers** (rows available):
+
+| Rows | Layout |
+|------|--------|
+| ≥ 3 | Full 3-line layout (default) |
+| 2 | Line 1 unchanged · Line 2 flattens all quotas (5h + 7d + snt + ops + $) |
+| 1 | Single line: `model │ ctx% │ 5h% │ 7d%` — compact, no bars |
+
+**Width tiers** (applied per-line, degrading until the line fits):
+
+| Tier | Content per quota |
+|------|-------------------|
+| Full | bar + pct + pace glyph + projected% + reset timer |
+| No-reset | drop reset timer |
+| No-pace | drop pace glyph + projected% |
+| Compact | label + pct only (no bar) |
+
+Line 1 git info follows the same tier order: `project + branch*` → `project` → omitted.
+
+Terminal dimensions are read from `process.stderr` (stays attached to the TTY even when stdout is piped), then `$COLUMNS`/`$LINES`, then defaults (120×3).
 
 ## Replacing claude-hud
 

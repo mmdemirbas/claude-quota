@@ -12,7 +12,9 @@ src/
 ├── credentials.ts  # Read OAuth credentials (macOS Keychain + file fallback)
 ├── usage.ts        # Fetch api.anthropic.com/api/oauth/usage + file-based cache
 ├── git.ts          # Git branch and dirty status
-└── render.ts       # ANSI status line rendering
+├── ansi.ts         # ANSI-aware string utilities (visibleLength, truncate)
+├── terminal.ts     # Terminal dimension resolution (stderr TTY → env vars → defaults)
+└── render.ts       # ANSI status line rendering (width + height adaptive)
 ```
 
 ## Build & Test
@@ -32,11 +34,20 @@ src/
 3. Calls `GET api.anthropic.com/api/oauth/usage` with Bearer token
 4. Parses ALL response fields (five_hour, seven_day, seven_day_sonnet, seven_day_opus, extra_usage)
 5. Caches response in `~/.claude/plugins/claude-quota/.usage-cache.json` (5 min hard TTL; 2 min soft TTL — stale-while-revalidate spawns background refresh; 15 s on error; exponential backoff on 429)
-6. Renders three lines to stdout
+6. Renders 1–3 lines to stdout (adaptive to terminal height and width)
 
 ## Key Design Decisions
 
-- **Three-line layout**: line 1 = context (model, ctx window, project, git); line 2 = plan + 5h session + 7d all-models; line 3 = fetch time + sonnet + opus + extra usage
+- **Adaptive height layout**:
+  - rows ≥ 3: three-line layout — line 1 = context (model, ctx, project, git); line 2 = plan + 5h + 7d; line 3 = fetch time + sonnet + opus + extra usage
+  - rows = 2: two-line — line 1 unchanged; line 2 flattens all quotas (plan + 5h + 7d + snt + ops + $)
+  - rows = 1: single line — model + compact ctx% + 5h% + 7d% (no bars, no git)
+- **Adaptive width layout**: each line independently degrades through four detail tiers until it fits, with hard truncation as final safety net:
+  - full (≥32 chars/quota): bar + pct + pace glyph + projected% + reset timer
+  - no-reset (25): drop reset timers
+  - no-pace (19): drop pace glyph + projected%
+  - compact (9): drop bar, show label + pct only
+- **Terminal dimensions**: resolved from `process.stderr` (stays TTY when stdout is piped) → `$COLUMNS`/`$LINES` env vars → defaults (120×3)
 - **Pace indicators**: each quota shows current%, directional glyph (↘/→/↗), projected%, and reset countdown
 - **Fixed-width columns**: all quota segments (label, bar, value, pace, reset/limit) use the same char widths so glyphs align across lines
 - **Fetch time**: `fetchedAt` stored in `UsageData`, rendered as `⟳HH:MM` in the col-0 of line 3 (exact local time, not relative — stays accurate without per-second refresh)
