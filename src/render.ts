@@ -1,5 +1,6 @@
 import type { StdinData, UsageData, GitStatus } from './types.js';
 import { getModelName, getContextPercent, getProjectName, getEffortLevel } from './stdin.js';
+import { visibleLength, truncate } from './ansi.js';
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 
@@ -168,30 +169,101 @@ function monthElapsedFraction(now: number): number {
   return elapsed / daysInMonth;
 }
 
+// ── Detail levels ──────────────────────────────────────────────────────────
+
+/**
+ * Controls how much information is shown in each quota segment and in the
+ * git portion of line 1. Tiers are tried in order until the line fits within
+ * the available terminal width.
+ *
+ * Quota segment visible widths per tier:
+ *   full:      label(4) + bar(10) + sp(1) + pct(4) + pace(6) + reset(7) = 32
+ *   no-reset:  label(4) + bar(10) + sp(1) + pct(4) + pace(6)            = 25
+ *   no-pace:   label(4) + bar(10) + sp(1) + pct(4)                      = 19
+ *   compact:   label(4) + sp(1)   + pct(4)                              =  9
+ *
+ * Line-1 git degradation:
+ *   full / no-reset:  project + git:(branch[*])
+ *   no-pace:          project only
+ *   compact:          omit git entirely
+ */
+export type DetailLevel = 'full' | 'no-reset' | 'no-pace' | 'compact';
+const DETAIL_LEVELS: DetailLevel[] = ['full', 'no-reset', 'no-pace', 'compact'];
+
+// ── Adaptive line builder ──────────────────────────────────────────────────
+
+const SEP = dim(' │ '); // 3 visible chars
+
+/**
+ * Build a console line by trying each detail level in order.
+ * Returns the first rendering whose visible length fits within maxCols,
+ * or the compact rendering hard-truncated to maxCols as a final safety net.
+ */
+function fitLine(
+  buildParts: (detail: DetailLevel) => (string | null)[],
+  maxCols: number,
+): string {
+  for (const detail of DETAIL_LEVELS) {
+    const parts = buildParts(detail).filter((p): p is string => p !== null);
+    if (parts.length === 0) return '';
+    const line = parts.join(SEP);
+    if (visibleLength(line) <= maxCols) return line;
+  }
+  // Safety net: hard truncate the compact rendering
+  const parts = buildParts('compact').filter((p): p is string => p !== null);
+  return truncate(parts.join(SEP), maxCols);
+}
+
 // ── Segment rendering ──────────────────────────────────────────────────────
 
-// Fixed visible widths for alignment across lines:
-//   label: 4   bar: 10   space: 1   pct: 4   pace: 6   reset: 7
-//   Total per quota metric: 32 visible chars
+/**
+ * Render the git portion of line 1.
+ * Returns null when project is absent or detail is 'compact'.
+ */
+function renderGit(
+  project: string | null,
+  git: GitStatus | null,
+  detail: DetailLevel,
+): string | null {
+  if (!project || detail === 'compact') return null;
+  let part = c(YELLOW, project);
+  if (git && detail !== 'no-pace') {
+    const branchStr = git.branch + (git.isDirty ? '*' : '');
+    part += ` ${c(MAGENTA, 'git:(')}${c(CYAN, branchStr)}${c(MAGENTA, ')')}`;
+  }
+  return part;
+}
 
-/** Format with fixed-width fields so bars, pcts, glyphs, and resets align. */
+/**
+ * Render a quota metric segment.
+ * Visible widths by tier — see DetailLevel comment for the breakdown.
+ * label must be exactly 4 visible chars (e.g. " 5h:", "snt:").
+ */
 function renderQuota(
-  label: string,  // must be exactly 4 visible chars (e.g. " 5h:", "snt:")
+  label: string,
   pct: number | null,
   resetAt: Date | null,
   windowMs: number,
   now: number,
+  detail: DetailLevel,
 ): string | null {
   if (pct === null) return null;
-
-  const b = bar(pct, 10, quotaColor);
-  const pace = calcPace(pct, resetAt, windowMs, now);
-  const reset = resetIn(resetAt, now);
 
   // pct: right-justify in 4 chars → " 17%", "100%"
   const pctStr = `${pct}%`.padStart(4);
 
+  if (detail === 'compact') {
+    return `${dim(label)} ${quotaColor(pct)}${pctStr}${R}`;
+  }
+
+  const b = bar(pct, 10, quotaColor);
+
+  if (detail === 'no-pace') {
+    return `${dim(label)}${b} ${quotaColor(pct)}${pctStr}${R}`;
+  }
+
   // pace: 1(space) + 1(glyph) + 4(proj padded) = 6 chars, or 6 spaces
+  const pace = calcPace(pct, resetAt, windowMs, now);
   let paceStr: string;
   if (pace) {
     const projStr = `${pace.projected}%`.padStart(4);
@@ -200,7 +272,12 @@ function renderQuota(
     paceStr = '      '; // 6 spaces
   }
 
-  // reset: 1(space) + up to 6(↺+time padded to 6) = 7 chars, or 7 spaces
+  if (detail === 'no-reset') {
+    return `${dim(label)}${b} ${quotaColor(pct)}${pctStr}${R}${paceStr}`;
+  }
+
+  // full: add reset (1(space) + up to 6(↺+time padded to 6) = 7 chars)
+  const reset = resetIn(resetAt, now);
   let resetStr: string;
   if (reset) {
     const resetPad = `↺${reset}`.padEnd(6);
@@ -219,11 +296,12 @@ export function formatMoney(amount: number): string {
   return `$${Math.round(amount)}`;
 }
 
-/** Format:  ●$: bar $value glyph $projected /$limit  or  ○$: when disabled.
- *  Uses the same fixed-width columns as renderQuota so bars, values, glyphs,
- *  and trailing fields stay aligned across lines.
- *  label:4  bar:10  sp:1  value:4  pace:6  limit:7  = 32 visible chars */
-function renderExtraUsage(usage: UsageData, now: number): string | null {
+/**
+ * Render the extra (pay-as-you-go) usage segment.
+ * Same tier widths as renderQuota; 'reset' slot holds the monthly limit instead.
+ * Returns "○$:" (4 visible chars) when extra usage is disabled.
+ */
+function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): string | null {
   if (!usage.extraUsage) return null;
   if (!usage.extraUsage.enabled) return `${dim(' ○$:')}`;
 
@@ -231,10 +309,18 @@ function renderExtraUsage(usage: UsageData, now: number): string | null {
   const usedPct = Math.min(100, Math.round((usedCredits / monthlyLimit) * 100));
   const ratio = usedCredits / monthlyLimit;
 
-  const b = bar(usedPct, 10, moneyBarColor);
-
   // value: right-justified in 4 chars (matches pct field in renderQuota)
   const valueStr = formatMoney(usedCredits).padStart(4);
+
+  if (detail === 'compact') {
+    return `${dim(' ●$:')} ${moneyValueColor(ratio)}${valueStr}${R}`;
+  }
+
+  const b = bar(usedPct, 10, moneyBarColor);
+
+  if (detail === 'no-pace') {
+    return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}`;
+  }
 
   // pace: 1(space) + 1(glyph) + 4(projected padded) = 6 chars, or 6 spaces
   let paceStr: string;
@@ -260,7 +346,11 @@ function renderExtraUsage(usage: UsageData, now: number): string | null {
     paceStr = '      '; // 6 spaces
   }
 
-  // limit: 1(space) + /+value padded to 6 = 7 chars (matches reset field in renderQuota)
+  if (detail === 'no-reset') {
+    return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${paceStr}`;
+  }
+
+  // full: add monthly limit (matches reset slot in renderQuota)
   const limitPad = `/${formatMoney(monthlyLimit)}`.padEnd(6);
   const limitStr = ` ${dim(limitPad)}`;
 
@@ -275,11 +365,16 @@ export interface RenderInput {
   git: GitStatus | null;
   /** Override current timestamp (ms). Used in tests for determinism. */
   now?: number;
+  /** Terminal width in columns. Defaults to 120. */
+  columns?: number;
+  /** Terminal height in rows (capped at 3). Defaults to 3. */
+  rows?: number;
 }
 
 export function render(input: RenderInput): void {
   const { stdin, usage, git } = input;
   const now = input.now ?? Date.now();
+  const cols = input.columns ?? 120;
 
   // ── Column-0 width: pad model and plan to the same width so bars align ─────
   const modelText = modelDisplay(getModelName(stdin), getEffortLevel(stdin));
@@ -294,22 +389,18 @@ export function render(input: RenderInput): void {
   const ctxPct = getContextPercent(stdin);
   const ctxBar = bar(ctxPct, 10, ctxColor);
   const ctxPctStr = `${ctxPct}%`.padStart(4);
-
-  const line1: string[] = [];
-  line1.push(pad0(modelText, CYAN));
-  line1.push(`${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`);
-
+  const ctxSegment = `${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
   const project = getProjectName(stdin);
-  if (project) {
-    let projectPart = c(YELLOW, project);
-    if (git) {
-      const branchStr = git.branch + (git.isDirty ? '*' : '');
-      projectPart += ` ${c(MAGENTA, 'git:(')}${c(CYAN, branchStr)}${c(MAGENTA, ')')}`;
-    }
-    line1.push(projectPart);
-  }
 
-  console.log(`${R}${line1.join(dim(' │ '))}`);
+  const line1 = fitLine(
+    (detail) => [
+      pad0(modelText, CYAN),
+      ctxSegment,
+      renderGit(project, git, detail),
+    ],
+    cols,
+  );
+  console.log(`${R}${line1}`);
 
   // ── Lines 2 & 3: account ──────────────────────────────────────────────────
   // Layout (labels all 4 visible chars so bars align across lines):
@@ -317,35 +408,41 @@ export function render(input: RenderInput): void {
   //   Line 3: spaces      │ snt: bar pct% pace reset │  ●$: bar val  pace limit
 
   if (usage && !usage.apiUnavailable) {
-    const line2: string[] = [];
-    const line3: string[] = [];
-
-    if (planText) line2.push(pad0(planText, CYAN));
-
-    const fh = renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now);
-    if (fh) line2.push(fh);
-    const sd = renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now);
-    if (sd) line2.push(sd);
-
-    const snt = renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now);
-    if (snt) line3.push(snt);
-    const opus = renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now);
-    if (opus) line3.push(opus);
-    const extra = renderExtraUsage(usage, now);
-    if (extra) line3.push(extra);
-
     const syncHint = usage.apiError === 'rate-limited' ? dim(' ⟳') : '';
 
-    if (line2.length > 0 || planText) {
-      console.log(`${R}${line2.join(dim(' │ '))}${line3.length ? '' : syncHint}`);
+    const line2HasContent = usage.fiveHour !== null || usage.sevenDay !== null || !!planText;
+    if (line2HasContent) {
+      const line2 = fitLine(
+        (detail) => [
+          planText ? pad0(planText, CYAN) : null,
+          renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
+          renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
+        ],
+        cols,
+      );
+      const snt = renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, 'full');
+      const hasLine3 = snt !== null || usage.opus !== null || usage.extraUsage !== null;
+      console.log(`${R}${line2}${hasLine3 ? '' : syncHint}`);
     }
-    if (line3.length > 0) {
-      const col0 = (planText && usage.fetchedAt)
+
+    const sntFull = renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, 'full');
+    const opusFull = renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, 'full');
+    const extraFull = renderExtraUsage(usage, now, 'full');
+    if (sntFull !== null || opusFull !== null || extraFull !== null) {
+      const col0Str = (planText && usage.fetchedAt)
         ? pad0(formatFetchTime(usage.fetchedAt), DIM)
         : ' '.repeat(col0Width);
-      const parts = planText ? [col0, ...line3] : line3;
-      console.log(`${R}${parts.join(dim(' │ '))}${syncHint}`);
-    } else if (!planText && line2.length === 0 && usage.apiError === 'rate-limited') {
+      const line3 = fitLine(
+        (detail) => [
+          planText ? col0Str : null,
+          renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
+          renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
+          renderExtraUsage(usage, now, detail),
+        ],
+        cols,
+      );
+      console.log(`${R}${line3}${syncHint}`);
+    } else if (!planText && !line2HasContent && usage.apiError === 'rate-limited') {
       console.log(`${R}${dim('⟳')}`);
     }
   } else if (usage?.apiUnavailable) {
