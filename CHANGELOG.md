@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Adaptive width rendering: each output line independently degrades through four detail tiers
+  (full → no-reset → no-pace → compact) until it fits within the terminal width, with hard
+  truncation as a final safety net — prevents garbling on narrow terminals
+- Adaptive height rendering: three height tiers based on available rows:
+  - rows ≥ 3: standard 3-line layout (unchanged default)
+  - rows = 2: line 1 unchanged; line 2 merges all quotas (5h + 7d + snt + ops + $)
+  - rows = 1: single summary line — `model │ ctx% │ 5h% │ 7d%` (no bars, no git)
+- `src/ansi.ts`: `visibleLength()` and `truncate()` — ANSI-aware string measurement and truncation
+- `src/terminal.ts`: terminal dimension resolution (stderr TTY → `$COLUMNS`/`$LINES` → 120×3)
+- Line 1 git info degrades gracefully: `project + branch*` → `project only` → omitted
+
 ## 0.2.2 — 2026-04-04
 
 ### Added

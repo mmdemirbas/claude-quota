@@ -26,7 +26,7 @@ max 5x      │  5h:██░░░░░░░░  17% ↗139% ↺3h56m │  7d
 | `lakelab`             | Project directory (last path segment)           |
 | `git:(main*)`         | Git branch, `*` = dirty working tree            |
 
-**Lines 2 & 3**
+**Quota segments** (lines 2 & 3 at rows ≥ 3; merged onto one line at rows = 2)
 
 | Segment                         | Meaning                                                                                 |
 |---------------------------------|-----------------------------------------------------------------------------------------|
