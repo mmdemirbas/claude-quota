@@ -322,6 +322,91 @@ describe('error states', () => {
   });
 });
 
+// ── height-adaptive rendering ──────────────────────────────────────────────
+
+describe('height-adaptive rendering', () => {
+  test('rows=3 produces three lines', () => {
+    const { line1, line2, line3 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 3 });
+    assert.ok(line1 !== '', 'line 1 must be present');
+    assert.ok(line2 !== '', 'line 2 must be present');
+    assert.ok(line3 !== '', 'line 3 must be present');
+  });
+
+  test('rows=3 line 2 has 5h and 7d only; line 3 has snt', () => {
+    const { line2, line3 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 3 });
+    assert.ok(line2.includes('5h:'), '5h should be on line 2');
+    assert.ok(line2.includes('7d:'), '7d should be on line 2');
+    assert.ok(!line2.includes('snt:'), 'snt should not be on line 2 at rows=3');
+    assert.ok(line3.includes('snt:'), 'snt should be on line 3 at rows=3');
+  });
+
+  test('rows=2 produces exactly two lines', () => {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2 });
+    console.log = orig;
+    assert.equal(lines.length, 2, 'rows=2 must produce exactly 2 lines');
+  });
+
+  test('rows=2 line 2 contains all quotas (5h, 7d, snt) on one line', () => {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2 });
+    console.log = orig;
+    const line2 = lines[1]?.replace(/\x1b\[[0-9;]*m/g, '') ?? '';
+    assert.ok(line2.includes('5h:'), '5h missing from rows=2 line 2');
+    assert.ok(line2.includes('7d:'), '7d missing from rows=2 line 2');
+    assert.ok(line2.includes('snt:'), 'snt missing from rows=2 line 2 (should be merged)');
+  });
+
+  test('rows=1 produces exactly one line', () => {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 1 });
+    console.log = orig;
+    assert.equal(lines.length, 1, 'rows=1 must produce exactly 1 line');
+  });
+
+  test('rows=1 line shows model, ctx, and quota percentages', () => {
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 1 });
+    assert.ok(line1.includes('sonnet'), 'model name missing from rows=1');
+    assert.ok(line1.includes('ctx:'), 'ctx label missing from rows=1');
+    assert.ok(line1.includes('5h:'), '5h label missing from rows=1');
+    assert.ok(line1.includes('7d:'), '7d label missing from rows=1');
+  });
+
+  test('rows=1 line does not include git branch (quota info takes priority)', () => {
+    const { line1 } = capture({
+      stdin: baseStdin, usage: baseUsage,
+      git: { branch: 'feature-xyz', isDirty: false }, now, rows: 1,
+    });
+    assert.ok(!line1.includes('feature-xyz'), 'git branch should not appear in rows=1');
+  });
+
+  test('rows=1 line does not contain ctx bar chars', () => {
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 1 });
+    // At rows=1, ctx uses compact form (label + pct, no bar)
+    assert.ok(!line1.includes('█'), 'ctx bar should not appear in rows=1');
+  });
+
+  test('rows=1 line never exceeds column width', () => {
+    const widths = [20, 33, 47, 57, 80, 120];
+    for (const columns of widths) {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.join(' '));
+      render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, rows: 1, columns });
+      console.log = orig;
+      assert.equal(lines.length, 1, `rows=1 must produce 1 line at columns=${columns}`);
+      const visible = vlen(lines[0] ?? '');
+      assert.ok(visible <= columns, `visible length ${visible} exceeds columns=${columns}`);
+    }
+  });
+});
+
 // ── width-adaptive rendering ───────────────────────────────────────────────
 //
 // Thresholds are derived from the baseStdin + baseUsage fixture:
@@ -400,7 +485,7 @@ describe('width-adaptive rendering', () => {
 
   // ── line length invariant ───────────────────────────────────────────────
 
-  test('no line exceeds the specified column width', () => {
+  test('no line exceeds the specified column width (invariant across many widths)', () => {
     const widths = [20, 33, 35, 45, 46, 55, 57, 67, 80, 81, 120, 200];
     for (const columns of widths) {
       const lines: string[] = [];

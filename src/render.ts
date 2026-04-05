@@ -375,8 +375,10 @@ export function render(input: RenderInput): void {
   const { stdin, usage, git } = input;
   const now = input.now ?? Date.now();
   const cols = input.columns ?? 120;
+  const rows = Math.min(input.rows ?? 3, 3);
 
   // ── Column-0 width: pad model and plan to the same width so bars align ─────
+  // Only relevant when rows ≥ 2 (multi-line output).
   const modelText = modelDisplay(getModelName(stdin), getEffortLevel(stdin));
   const planText  = (usage?.planName ?? '').toLowerCase();
   const col0Width = Math.max(modelText.length, planText.length);
@@ -385,65 +387,113 @@ export function render(input: RenderInput): void {
   const pad0 = (text: string, color: string) =>
     `${color}${text}${R}${' '.repeat(col0Width - text.length)}`;
 
-  // ── Line 1: model │ ctx: bar pct% │ project git ────────────────────────────
+  // ── Line 1 ────────────────────────────────────────────────────────────────
   const ctxPct = getContextPercent(stdin);
-  const ctxBar = bar(ctxPct, 10, ctxColor);
   const ctxPctStr = `${ctxPct}%`.padStart(4);
-  const ctxSegment = `${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
   const project = getProjectName(stdin);
 
-  const line1 = fitLine(
-    (detail) => [
-      pad0(modelText, CYAN),
-      ctxSegment,
-      renderGit(project, git, detail),
-    ],
-    cols,
-  );
+  let line1: string;
+
+  if (rows === 1 && usage && !usage.apiUnavailable) {
+    // Single-row mode: model + compact ctx (no bar) + compact 5h + compact 7d.
+    // Both ctx and quota bars are omitted; compact (label + pct) format is used
+    // throughout to fit as many data points as possible on a single line.
+    // Git info is omitted in favour of quota percentages.
+    const ctxCompact = `${dim('ctx:')} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
+    const parts: (string | null)[] = [
+      c(CYAN, modelText),
+      ctxCompact,
+      renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, 'compact'),
+      renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, 'compact'),
+    ];
+    line1 = truncate(
+      parts.filter((p): p is string => p !== null).join(SEP),
+      cols,
+    );
+  } else {
+    // Multi-row mode: model + ctx bar + project/git (git degrades via detail tiers).
+    const ctxBar = bar(ctxPct, 10, ctxColor);
+    const ctxSegment = `${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
+    line1 = fitLine(
+      (detail) => [
+        pad0(modelText, CYAN),
+        ctxSegment,
+        renderGit(project, git, detail),
+      ],
+      cols,
+    );
+  }
   console.log(`${R}${line1}`);
 
+  if (rows < 2) return;
+
   // ── Lines 2 & 3: account ──────────────────────────────────────────────────
-  // Layout (labels all 4 visible chars so bars align across lines):
-  //   Line 2: plan_padded │  5h: bar pct% pace reset │  7d: bar pct% pace reset
-  //   Line 3: spaces      │ snt: bar pct% pace reset │  ●$: bar val  pace limit
+  // rows=2 layout:  plan │ 5h │ 7d │ snt │ ops │ $  (all quotas on one line)
+  // rows≥3 layout:
+  //   Line 2: plan │  5h bar pct% pace reset │  7d bar pct% pace reset
+  //   Line 3: time │ snt bar pct% pace reset │  ●$ bar val  pace limit
 
   if (usage && !usage.apiUnavailable) {
     const syncHint = usage.apiError === 'rate-limited' ? dim(' ⟳') : '';
 
-    const line2HasContent = usage.fiveHour !== null || usage.sevenDay !== null || !!planText;
-    if (line2HasContent) {
-      const line2 = fitLine(
-        (detail) => [
-          planText ? pad0(planText, CYAN) : null,
-          renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
-          renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
-        ],
-        cols,
-      );
-      const snt = renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, 'full');
-      const hasLine3 = snt !== null || usage.opus !== null || usage.extraUsage !== null;
-      console.log(`${R}${line2}${hasLine3 ? '' : syncHint}`);
-    }
+    if (rows === 2) {
+      // Flatten all quotas onto a single line.
+      const hasContent =
+        usage.fiveHour !== null || usage.sevenDay !== null ||
+        usage.sonnet !== null || usage.opus !== null ||
+        usage.extraUsage !== null || !!planText;
+      if (hasContent) {
+        const line2 = fitLine(
+          (detail) => [
+            planText ? pad0(planText, CYAN) : null,
+            renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
+            renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
+            renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
+            renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
+            renderExtraUsage(usage, now, detail),
+          ],
+          cols,
+        );
+        console.log(`${R}${line2}${syncHint}`);
+      } else if (usage.apiError === 'rate-limited') {
+        console.log(`${R}${dim('⟳')}`);
+      }
+    } else {
+      // rows ≥ 3: standard two-account-line layout.
+      const line2HasContent = usage.fiveHour !== null || usage.sevenDay !== null || !!planText;
+      if (line2HasContent) {
+        const line2 = fitLine(
+          (detail) => [
+            planText ? pad0(planText, CYAN) : null,
+            renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
+            renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
+          ],
+          cols,
+        );
+        const hasLine3 =
+          usage.sonnet !== null || usage.opus !== null || usage.extraUsage !== null;
+        console.log(`${R}${line2}${hasLine3 ? '' : syncHint}`);
+      }
 
-    const sntFull = renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, 'full');
-    const opusFull = renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, 'full');
-    const extraFull = renderExtraUsage(usage, now, 'full');
-    if (sntFull !== null || opusFull !== null || extraFull !== null) {
-      const col0Str = (planText && usage.fetchedAt)
-        ? pad0(formatFetchTime(usage.fetchedAt), DIM)
-        : ' '.repeat(col0Width);
-      const line3 = fitLine(
-        (detail) => [
-          planText ? col0Str : null,
-          renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
-          renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
-          renderExtraUsage(usage, now, detail),
-        ],
-        cols,
-      );
-      console.log(`${R}${line3}${syncHint}`);
-    } else if (!planText && !line2HasContent && usage.apiError === 'rate-limited') {
-      console.log(`${R}${dim('⟳')}`);
+      const hasLine3Content =
+        usage.sonnet !== null || usage.opus !== null || usage.extraUsage !== null;
+      if (hasLine3Content) {
+        const col0Str = (planText && usage.fetchedAt)
+          ? pad0(formatFetchTime(usage.fetchedAt), DIM)
+          : ' '.repeat(col0Width);
+        const line3 = fitLine(
+          (detail) => [
+            planText ? col0Str : null,
+            renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
+            renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
+            renderExtraUsage(usage, now, detail),
+          ],
+          cols,
+        );
+        console.log(`${R}${line3}${syncHint}`);
+      } else if (!planText && !line2HasContent && usage.apiError === 'rate-limited') {
+        console.log(`${R}${dim('⟳')}`);
+      }
     }
   } else if (usage?.apiUnavailable) {
     const hint = usage.apiError === 'rate-limited' ? '⟳' : '⚠';
