@@ -13,6 +13,7 @@ const CACHE_SOFT_TTL_MS = 45_000;          // 45s soft TTL (serve stale + backgr
 const CACHE_FAILURE_TTL_MS = 15_000;        // 15s for failures
 const CACHE_RATE_LIMITED_BASE_MS = 60_000;   // 60s base for 429 backoff
 const CACHE_RATE_LIMITED_MAX_MS = 5 * 60_000;
+const FETCH_COORDINATION_MS = 20_000;       // 20s — if fetcher hasn't written by now, it died
 const PROFILE_CACHE_TTL_MS = 24 * 60 * 60_000; // 24h — org UUID rarely changes
 const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — changes only on top-up
 const API_TIMEOUT_MS = 15_000;
@@ -87,6 +88,11 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
     const ttl = cache.data.apiUnavailable ? CACHE_FAILURE_TTL_MS : CACHE_TTL_MS;
     const age = now - cache.timestamp;
     if (age < ttl) {
+      // A previous fetch was started but never completed (process killed after bump).
+      // After the coordination window, stop trusting the bump and force re-fetch.
+      if (cache.fetchStartedAt && now - cache.fetchStartedAt >= FETCH_COORDINATION_MS) {
+        return null;
+      }
       const display = (cache.data.apiError === 'rate-limited' && cache.lastGoodData)
         ? { ...hydrateDates(cache.lastGoodData), apiError: 'rate-limited' as const }
         : hydrateDates(cache.data);
@@ -103,6 +109,7 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
 
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
   const cache: CacheFile = { data, timestamp, ...opts };
+  delete cache.fetchStartedAt; // fetch completed — clear the coordination lock
   writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
 }
 
@@ -197,6 +204,7 @@ function bumpCacheTimestamp(now: number): void {
     const cache: CacheFile = JSON.parse(raw);
     if (!cache.data.apiUnavailable && !cache.rateLimitedCount) {
       cache.timestamp = now;
+      cache.fetchStartedAt = now;
       writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
     }
   } catch { /* no cache to bump */ }

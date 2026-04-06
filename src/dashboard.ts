@@ -1,15 +1,13 @@
-import { writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-/** Write dashboard.html to the plugin dir if it doesn't exist yet. */
+/** Write dashboard.html to the plugin dir (always overwrite to keep in sync with code). */
 export function ensureDashboardHtml(): void {
   try {
     const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
     const htmlPath = join(dir, 'dashboard.html');
-    if (!existsSync(htmlPath)) {
-      writeFileSync(htmlPath, DASHBOARD_HTML, 'utf8');
-    }
+    writeFileSync(htmlPath, DASHBOARD_HTML, 'utf8');
   } catch { /* ignore */ }
 }
 
@@ -709,14 +707,14 @@ function renderDashboard() {
 }
 `;
 
-// ── Loader: polls data.js every 5s ──────────────────────────────────────
-
-// ── Loader: polls data.js + credit-grant.js every 5s ────────────────────
+// ── Loader: polls data.js + credit-grant.js every 5s, survives sleep ───
 
 const LOADER = `
 var DATA = null;
 var CREDIT_GRANT = null;
 var _seq = 0;
+var _lastLoad = 0;
+var POLL_MS = 5000;
 function _loadScript(src, cb) {
   var s = document.createElement('script');
   s.src = src + '?_=' + _seq;
@@ -725,6 +723,7 @@ function _loadScript(src, cb) {
   document.head.appendChild(s);
 }
 function _load() {
+  _lastLoad = Date.now();
   ++_seq;
   _loadScript('credit-grant.js', function() {
     _loadScript('data.js', function() {
@@ -732,8 +731,16 @@ function _load() {
     });
   });
 }
+// Reload immediately when tab becomes visible (handles background throttle + standby)
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden && Date.now() - _lastLoad > POLL_MS) _load();
+});
+// Detect timer drift from sleep: if interval fires late, data is stale
+setInterval(function() {
+  var drift = Date.now() - _lastLoad;
+  if (drift >= POLL_MS) _load();
+}, POLL_MS);
 _load();
-setInterval(_load, 5000);
 `;
 
 // ── Static HTML shell ───────────────────────────────────────────────────
