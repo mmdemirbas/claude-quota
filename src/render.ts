@@ -18,6 +18,9 @@ const GRAY = '\x1b[90m'; // bright black — for wasted quota in bars
 const c = (color: string, text: string) => `${color}${text}${R}`;
 const dim = (text: string) => c(DIM, text);
 
+/** Map bright ANSI colors (90–97) to their darker counterparts (30–37). */
+const darken = (color: string): string => color.replace(/\[9(\d)m/, '[3$1m');
+
 // ── Model name display ─────────────────────────────────────────────────────
 
 function extractFamily(displayName: string): string {
@@ -118,7 +121,7 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
   const normalFill = Math.min(filled, idealPos);
   const darkFill = filled - normalFill;
 
-  return `${color}${'█'.repeat(normalFill)}${DIM}${color}${'█'.repeat(darkFill)}${DIM}${'░'.repeat(empty)}${R}`;
+  return `${color}${'█'.repeat(normalFill)}${darken(color)}${'█'.repeat(darkFill)}${DIM}${'░'.repeat(empty)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
