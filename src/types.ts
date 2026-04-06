@@ -67,6 +67,36 @@ export interface ExtraUsageData {
   enabled: boolean;
   monthlyLimit: number;
   usedCredits: number;
+  /** Total prepaid credit grant in dollars. null when unknown. */
+  creditGrant: number | null;
+}
+
+/** Profile API response from /api/oauth/profile */
+export interface ProfileApiResponse {
+  organization?: {
+    uuid?: string;
+  };
+}
+
+/** Credit grant API response from /api/oauth/organizations/{orgUUID}/overage_credit_grant */
+export interface CreditGrantApiResponse {
+  available?: boolean;
+  granted?: boolean;
+  amount_minor_units?: number;
+  currency?: string;
+}
+
+/** File-based profile cache */
+export interface ProfileCacheFile {
+  orgUUID: string;
+  timestamp: number;
+}
+
+/** File-based credit grant cache */
+export interface CreditGrantCacheFile {
+  /** Credit grant in dollars (null if unavailable) */
+  creditGrant: number | null;
+  timestamp: number;
 }
 
 /** File-based cache entry */

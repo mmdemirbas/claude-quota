@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readStdin } from './stdin.js';
-import { getUsage } from './usage.js';
+import { getUsage, getCreditGrant } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
@@ -41,10 +41,16 @@ async function main(): Promise<void> {
       return;
     }
 
-    const [{ data: usage, isStale }, git] = await Promise.all([
+    const [{ data: usage, isStale }, git, creditGrant] = await Promise.all([
       getUsage(),
       stdin.cwd ? Promise.resolve(getGitStatus(stdin.cwd)) : Promise.resolve(null),
+      getCreditGrant(),
     ]);
+
+    // Merge credit grant into extra usage data
+    if (usage?.extraUsage && creditGrant !== null) {
+      usage.extraUsage = { ...usage.extraUsage, creditGrant };
+    }
 
     if (isStale) spawnBackgroundRefresh(scriptPath);
 

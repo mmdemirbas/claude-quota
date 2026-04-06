@@ -356,6 +356,23 @@ export function formatMoney(amount: number): string {
 }
 
 /**
+ * Format balance (creditGrant - usedCredits) for display.
+ * Shows two decimal places for amounts under $100, otherwise uses formatMoney.
+ * Exported for testing.
+ */
+export function formatBalance(creditGrant: number, usedCredits: number): string {
+  const balance = Math.max(0, creditGrant - usedCredits);
+  if (balance === 0) return '$0';
+  if (balance < 100) {
+    const rounded = Math.floor(balance * 100) / 100;
+    // Show cents for small amounts, whole dollars otherwise
+    if (rounded < 10) return `$${rounded.toFixed(2)}`;
+    return `$${rounded.toFixed(2)}`;
+  }
+  return formatMoney(balance);
+}
+
+/**
  * Render the extra (pay-as-you-go) usage segment.
  * Same tier widths as renderQuota; 'reset' slot holds the monthly limit instead.
  * Returns "○$:" (4 visible chars) when extra usage is disabled.
@@ -364,15 +381,20 @@ function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): s
   if (!usage.extraUsage) return null;
   if (!usage.extraUsage.enabled) return `${dim(' ○$:')}`;
 
-  const { usedCredits, monthlyLimit } = usage.extraUsage;
+  const { usedCredits, monthlyLimit, creditGrant } = usage.extraUsage;
   const usedPct = Math.min(100, Math.round((usedCredits / monthlyLimit) * 100));
   const ratio = usedCredits / monthlyLimit;
+
+  // Balance suffix: " ($XX.XX)" when credit grant is known
+  const balStr = creditGrant !== null
+    ? ` ${dim('(')}${GREEN}${formatBalance(creditGrant, usedCredits)}${R}${dim(')')}`
+    : '';
 
   // value: right-justified in 4 chars (matches pct field in renderQuota)
   const valueStr = formatMoney(usedCredits).padStart(4);
 
   if (detail === 'compact') {
-    return `${dim(' ●$:')} ${moneyValueColor(ratio)}${valueStr}${R}`;
+    return `${dim(' ●$:')} ${moneyValueColor(ratio)}${valueStr}${R}${balStr}`;
   }
 
   // Compute pace early so projected% can colour the bar even in no-pace tier
@@ -384,7 +406,7 @@ function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): s
   const b = bar(usedPct, 10, moneyBarColor, projectedMoneyPct);
 
   if (detail === 'no-pace') {
-    return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}`;
+    return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${balStr}`;
   }
 
   // pace: 1(space) + 1(glyph) + 4(projected padded) = 6 chars, or 6 spaces
@@ -410,14 +432,14 @@ function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): s
   }
 
   if (detail === 'no-reset') {
-    return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${paceStr}`;
+    return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${paceStr}${balStr}`;
   }
 
   // full: add monthly limit (matches reset slot in renderQuota)
   const limitPad = `/${formatMoney(monthlyLimit)}`.padEnd(6);
   const limitStr = ` ${dim(limitPad)}`;
 
-  return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${paceStr}${limitStr}`;
+  return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${paceStr}${limitStr}${balStr}`;
 }
 
 // ── Main render ────────────────────────────────────────────────────────────

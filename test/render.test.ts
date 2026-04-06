@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { render, modelDisplay, calcPace } from '../src/render.js';
+import { render, modelDisplay, calcPace, formatBalance } from '../src/render.js';
 import type { RenderInput } from '../src/render.js';
 import type { UsageData } from '../src/types.js';
 
@@ -266,7 +266,7 @@ describe('extra usage rendering', () => {
   test('shows ●$: label, bar, current, projected, limit', () => {
     const withExtra: UsageData = {
       ...baseUsage,
-      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50 },
+      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50, creditGrant: null },
     };
     const { line3 } = capture({ stdin: baseStdin, usage: withExtra, git: null, now });
     assert.ok(line3.includes('●$:'), '●$: label missing');
@@ -277,7 +277,7 @@ describe('extra usage rendering', () => {
   test('shows pace glyph and projected spend', () => {
     const withExtra: UsageData = {
       ...baseUsage,
-      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50 },
+      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50, creditGrant: null },
     };
     const { line3 } = capture({ stdin: baseStdin, usage: withExtra, git: null, now });
     const afterDollar = line3.split('$:')[1] ?? '';
@@ -288,11 +288,64 @@ describe('extra usage rendering', () => {
   test('$0 spent still shows pace (projected $0)', () => {
     const zeroed: UsageData = {
       ...baseUsage,
-      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 0 },
+      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 0, creditGrant: null },
     };
     const { line3 } = capture({ stdin: baseStdin, usage: zeroed, git: null, now });
     assert.ok(line3.includes('●$:'), '●$: label missing');
     assert.ok(line3.includes('$0'), '$0 spend missing');
+  });
+});
+
+// ── credit grant balance ──────────────────────────────────────────────────
+
+describe('credit grant balance', () => {
+  test('shows balance when creditGrant is present', () => {
+    const withGrant: UsageData = {
+      ...baseUsage,
+      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50, creditGrant: 1000 },
+    };
+    const { line3 } = capture({ stdin: baseStdin, usage: withGrant, git: null, now });
+    assert.ok(line3.includes('$950'), 'balance $950 should appear');
+  });
+
+  test('hides balance when creditGrant is null', () => {
+    const noGrant: UsageData = {
+      ...baseUsage,
+      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50, creditGrant: null },
+    };
+    const { line3 } = capture({ stdin: baseStdin, usage: noGrant, git: null, now });
+    assert.ok(!line3.includes('('), 'no balance parens when creditGrant is null');
+  });
+
+  test('shows cents for small balances', () => {
+    const smallGrant: UsageData = {
+      ...baseUsage,
+      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 495, creditGrant: 500 },
+    };
+    const { line3 } = capture({ stdin: baseStdin, usage: smallGrant, git: null, now });
+    assert.ok(line3.includes('$5.00'), 'should show $5.00 balance with cents');
+  });
+});
+
+describe('formatBalance', () => {
+  test('returns $0 when fully spent', () => {
+    assert.equal(formatBalance(100, 100), '$0');
+  });
+
+  test('returns $0 when overspent', () => {
+    assert.equal(formatBalance(100, 150), '$0');
+  });
+
+  test('shows cents for amounts under $100', () => {
+    assert.equal(formatBalance(100, 5.42), '$94.58');
+  });
+
+  test('uses formatMoney for amounts >= $100', () => {
+    assert.equal(formatBalance(1000, 5), '$995');
+  });
+
+  test('shows cents for small balances', () => {
+    assert.equal(formatBalance(100, 99.50), '$0.50');
   });
 });
 
@@ -522,7 +575,7 @@ describe('width-adaptive rendering', () => {
 
 const usageWithExtra: UsageData = {
   ...baseUsage,
-  extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50 },
+  extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50, creditGrant: null },
   fetchedAt: now,
 };
 
@@ -560,6 +613,29 @@ describe('line 3 width-adaptive rendering', () => {
       const orig = console.log;
       console.log = (...args: unknown[]) => lines.push(args.join(' '));
       render({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns });
+      console.log = orig;
+      for (const line of lines) {
+        const visible = vlen(line);
+        assert.ok(
+          visible <= columns,
+          `line visible length ${visible} exceeds columns=${columns}: "${line.replace(/\x1b\[[0-9;]*m/g, '')}"`,
+        );
+      }
+    }
+  });
+
+  test('no line exceeds column width when credit grant balance is shown', () => {
+    const withGrant: UsageData = {
+      ...baseUsage,
+      extraUsage: { enabled: true, monthlyLimit: 500, usedCredits: 50, creditGrant: 1000 },
+      fetchedAt: now,
+    };
+    const widths = [20, 35, 55, 66, 67, 80, 81, 95, 120];
+    for (const columns of widths) {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.join(' '));
+      render({ stdin: baseStdin, usage: withGrant, git: null, now, columns });
       console.log = orig;
       for (const line of lines) {
         const visible = vlen(line);

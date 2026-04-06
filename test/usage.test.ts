@@ -60,7 +60,7 @@ describe('parseExtraUsage', () => {
 
   test('returns disabled state when is_enabled is false', () => {
     const result = parseExtraUsage({ is_enabled: false, monthly_limit: 500, used_credits: 10 });
-    assert.deepEqual(result, { enabled: false, monthlyLimit: 0, usedCredits: 0 });
+    assert.deepEqual(result, { enabled: false, monthlyLimit: 0, usedCredits: 0, creditGrant: null });
   });
 
   test('returns null when monthly_limit is 0 (avoids $0/$0 display)', () => {
@@ -80,12 +80,13 @@ describe('parseExtraUsage', () => {
       monthly_limit: 500,
       used_credits: 1250,
     });
-    assert.deepEqual(result, { enabled: true, monthlyLimit: 5, usedCredits: 12.5 });
+    assert.deepEqual(result, { enabled: true, monthlyLimit: 5, usedCredits: 12.5, creditGrant: null });
   });
 
   test('defaults used_credits to 0 when absent', () => {
     const result = parseExtraUsage({ is_enabled: true, monthly_limit: 500 });
     assert.equal(result?.usedCredits, 0);
     assert.equal(result?.monthlyLimit, 5);
+    assert.equal(result?.creditGrant, null);
   });
 });
