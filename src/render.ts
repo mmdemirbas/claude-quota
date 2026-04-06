@@ -7,6 +7,7 @@ import { visibleLength, truncate } from './ansi.js';
 const R = '\x1b[0m';
 const DIM = '\x1b[2m';
 const RED = '\x1b[31m';
+const B_RED = '\x1b[91m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
 const MAGENTA = '\x1b[35m';
@@ -51,7 +52,7 @@ function ctxColor(pct: number): string {
 }
 
 function quotaColor(pct: number): string {
-  if (pct >= 90) return RED;
+  if (pct >= 90) return B_RED;
   if (pct >= 75) return B_MAG;
   return B_BLUE;
 }
