@@ -7,7 +7,6 @@ import { visibleLength, truncate } from './ansi.js';
 const R = '\x1b[0m';
 const DIM = '\x1b[2m';
 const RED = '\x1b[31m';
-const B_RED = '\x1b[91m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
 const MAGENTA = '\x1b[35m';
@@ -18,6 +17,9 @@ const GRAY = '\x1b[90m'; // bright black — for wasted quota in bars
 
 const c = (color: string, text: string) => `${color}${text}${R}`;
 const dim = (text: string) => c(DIM, text);
+
+/** Map bright ANSI colors (90–97) to their darker counterparts (30–37). */
+const darken = (color: string): string => color.replace(/\[9(\d)m/, '[3$1m');
 
 // ── Model name display ─────────────────────────────────────────────────────
 
@@ -52,7 +54,7 @@ function ctxColor(pct: number): string {
 }
 
 function quotaColor(pct: number): string {
-  if (pct >= 90) return B_RED;
+  if (pct >= 90) return RED;
   if (pct >= 75) return B_MAG;
   return B_BLUE;
 }
@@ -125,7 +127,7 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     const overFill = filled - normalFill;
     const bluePart = Math.max(0, projPos - filled);
     const grayPart = width - filled - bluePart;
-    return `${color}${'█'.repeat(normalFill)}${RED}${'█'.repeat(overFill)}${color}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
+    return `${color}${'█'.repeat(normalFill)}${darken(color)}${'█'.repeat(overFill)}${color}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
   }
 
   // Under-pace: consumed, green headroom to ideal, blue projected above ideal, gray rest
