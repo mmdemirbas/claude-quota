@@ -116,17 +116,22 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
   const idealPos = Math.round(elapsedFraction * width);
   const isOverPace = filled > idealPos;
 
+  const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
+
   if (isOverPace) {
-    // Over-pace: normal up to ideal, red beyond ideal
+    // Over-pace: normal up to ideal, red over-consumed, blue projected, gray rest
     const normalFill = idealPos;
     const overFill = filled - normalFill;
-    return `${color}${'█'.repeat(normalFill)}${RED}${'█'.repeat(overFill)}${DIM}${'░'.repeat(empty)}${R}`;
+    const bluePart = Math.max(0, projPos - filled);
+    const grayPart = width - filled - bluePart;
+    return `${color}${'█'.repeat(normalFill)}${RED}${'█'.repeat(overFill)}${color}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
   }
 
-  // Under-pace: consumed, green safe headroom (up to ideal), gray beyond
+  // Under-pace: consumed, green headroom to ideal, blue projected above ideal, gray rest
   const greenPart = Math.max(0, idealPos - filled);
-  const grayPart = width - filled - greenPart;
-  return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
+  const bluePart = Math.max(0, projPos - idealPos);
+  const grayPart = width - filled - greenPart - bluePart;
+  return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${color}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
