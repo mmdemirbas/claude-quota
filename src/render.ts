@@ -123,9 +123,8 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     return `${color}${'█'.repeat(normalFill)}${RED}${'█'.repeat(overFill)}${DIM}${'░'.repeat(empty)}${R}`;
   }
 
-  // Under-pace: consumed, green projected headroom, gray wasted
-  const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
-  const greenPart = Math.max(0, projPos - filled);
+  // Under-pace: consumed, green safe headroom (up to ideal), gray beyond
+  const greenPart = Math.max(0, idealPos - filled);
   const grayPart = width - filled - greenPart;
   return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
 }
