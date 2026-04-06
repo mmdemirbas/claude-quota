@@ -1,6 +1,4 @@
-import * as http from 'node:http';
 import type { UsageData } from './types.js';
-import { getUsage, getCreditGrant } from './usage.js';
 
 /** Data embedded in the dashboard HTML as JSON. */
 export interface DashboardData {
@@ -75,19 +73,24 @@ export function buildDashboardData(usage: UsageData, creditGrant: number | null)
   };
 }
 
-function generateDashboardHtml(): string {
+export function generateDashboardHtml(data: DashboardData): string {
+  const json = JSON.stringify(data);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="5">
 <title>Claude Usage Dashboard</title>
 <style>
 ${CSS}
 </style>
 </head>
 <body>
-<div id="app"><div class="loading">Loading usage data&hellip;</div></div>
+<div id="app"></div>
+<script>
+const DATA = ${json};
+</script>
 <script>
 ${JS}
 </script>
@@ -95,67 +98,6 @@ ${JS}
 </html>`;
 }
 
-// ── Local server ─────────────────────────────────────────────────────────
-
-async function fetchDashboardData(): Promise<DashboardData | null> {
-  const [{ data: usage }, creditGrant] = await Promise.all([
-    getUsage({ forceRefresh: true }),
-    getCreditGrant(),
-  ]);
-  if (!usage) return null;
-  if (usage.extraUsage && creditGrant !== null) {
-    usage.extraUsage = { ...usage.extraUsage, creditGrant };
-  }
-  return buildDashboardData(usage, creditGrant);
-}
-
-export function startDashboardServer(): Promise<{ url: string; server: http.Server }> {
-  return new Promise((resolve, reject) => {
-    const html = generateDashboardHtml();
-
-    const server = http.createServer(async (req, res) => {
-      // CORS for local fetch
-      res.setHeader('Access-Control-Allow-Origin', '*');
-
-      if (req.url === '/' || req.url === '/index.html') {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(html);
-        return;
-      }
-
-      if (req.url === '/api/data') {
-        try {
-          const data = await fetchDashboardData();
-          if (!data) {
-            res.writeHead(503, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'No usage data available' }));
-            return;
-          }
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(data));
-        } catch {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Failed to fetch usage data' }));
-        }
-        return;
-      }
-
-      res.writeHead(404);
-      res.end('Not found');
-    });
-
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      if (!addr || typeof addr === 'string') {
-        reject(new Error('Failed to bind'));
-        return;
-      }
-      resolve({ url: `http://127.0.0.1:${addr.port}`, server });
-    });
-
-    server.on('error', reject);
-  });
-}
 
 // ── Embedded CSS ──────────────────────────────────────────────────────────
 
@@ -474,29 +416,20 @@ body {
   .money-grid { grid-template-columns: 1fr; }
 }
 
-/* ── Empty / loading state ────────────────────────────────── */
-.empty, .loading {
+/* ── Empty state ─────────────────────────────────────────── */
+.empty {
   text-align: center;
   padding: 48px 24px;
   color: var(--text2);
   font-size: 16px;
 }
-.loading { animation: pulse 1.5s ease-in-out infinite; }
-@keyframes pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
 `;
 
 // ── Embedded JS ──────────────────────────────────────────────────────────
 
 const JS = `
-const REFRESH_INTERVAL_MS = 2 * 60 * 1000; // 2 min
-
-async function fetchData() {
-  const res = await fetch('/api/data');
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
-}
-
-function renderDashboard(d) {
+(function() {
+  const d = DATA;
   const app = document.getElementById('app');
 
   // ── Helpers ────────────────────────────────────────────
@@ -790,25 +723,5 @@ function renderDashboard(d) {
     + '</div>';
 
   app.innerHTML = html;
-}
-
-// ── Bootstrap: fetch data, render, schedule refresh ──────
-let refreshTimer = null;
-
-async function refresh() {
-  try {
-    const data = await fetchData();
-    renderDashboard(data);
-    document.title = 'Claude Usage Dashboard';
-  } catch (e) {
-    const app = document.getElementById('app');
-    if (app && !app.querySelector('.gauge-card')) {
-      app.innerHTML = '<div class="empty">Failed to load data. Is the server running?</div>';
-    }
-    // Keep showing stale data if we had it before
-  }
-}
-
-refresh();
-refreshTimer = setInterval(refresh, REFRESH_INTERVAL_MS);
+})();
 `;

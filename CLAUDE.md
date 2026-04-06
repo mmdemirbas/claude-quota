@@ -26,7 +26,6 @@ src/
 ./run stdin            # pipe mock JSON to test output
 ./run install          # build + npm link (makes global claude-quota binary point here)
 ./run release [patch]  # bump version, build, test, commit, push, tag → triggers npm publish
-claude-quota --dashboard  # generate and open HTML usage dashboard in browser
 ```
 
 ## How the Plugin Works
@@ -38,6 +37,7 @@ claude-quota --dashboard  # generate and open HTML usage dashboard in browser
 5. Fetches prepaid credit balance via profile + credit grant APIs (separate caches)
 6. Caches responses in `~/.claude/plugins/claude-quota/` (usage: 2 min hard / 45 s soft TTL; profile: 24 h; credit grant: 10 min; multi-instance aware — bumps timestamp before fetch to prevent parallel fetches)
 7. Renders 1–3 lines to stdout (adaptive to terminal height and width)
+8. Writes `dashboard.html` to the plugin dir (auto-refreshes every 5s via meta tag; open once with `! open ~/.claude/plugins/claude-quota/dashboard.html`)
 
 ## Key Design Decisions
 

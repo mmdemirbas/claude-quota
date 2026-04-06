@@ -4,19 +4,23 @@ import { getUsage, getCreditGrant } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
-import { startDashboardServer } from './dashboard.js';
+import { buildDashboardData, generateDashboardHtml } from './dashboard.js';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
 const DEBUG = process.env.CLAUDE_QUOTA_DEBUG === '1';
+
+function getPluginDir(): string {
+  return join(homedir(), '.claude', 'plugins', 'claude-quota');
+}
 
 function debugDump(filename: string, data: unknown): void {
   if (!DEBUG) return;
   try {
-    const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
+    const dir = getPluginDir();
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, filename), JSON.stringify(data, null, 2), 'utf8');
   } catch { /* ignore */ }
@@ -30,6 +34,16 @@ function spawnBackgroundRefresh(scriptPath: string): void {
     });
     child.unref();
   } catch { /* ignore */ }
+}
+
+function writeDashboard(usage: Parameters<typeof buildDashboardData>[0], creditGrant: number | null): void {
+  try {
+    const data = buildDashboardData(usage, creditGrant);
+    const html = generateDashboardHtml(data);
+    const dir = getPluginDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'dashboard.html'), html, 'utf8');
+  } catch { /* ignore — dashboard is best-effort */ }
 }
 
 async function main(): Promise<void> {
@@ -57,6 +71,9 @@ async function main(): Promise<void> {
 
     const { columns, rows } = terminalDims(stdin);
     render({ stdin, usage, git, columns, rows });
+
+    // Update dashboard HTML for browser viewing
+    if (usage) writeDashboard(usage, creditGrant);
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.log(`[claude-quota] Error: ${msg}`);
@@ -70,38 +87,8 @@ const isSame = (a: string, b: string): boolean => {
   try { return realpathSync(a) === realpathSync(b); }
   catch { return a === b; }
 };
-async function dashboard(): Promise<void> {
-  try {
-    const { url, server } = await startDashboardServer();
-
-    // Open in default browser
-    try {
-      if (process.platform === 'darwin') {
-        execFileSync('open', [url], { stdio: 'ignore' });
-      } else if (process.platform === 'linux') {
-        spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
-      }
-    } catch { /* browser open failed — URL is printed below */ }
-
-    console.log(`Dashboard running at ${url}`);
-    console.log('Press Ctrl+C to stop.');
-
-    // Keep alive until Ctrl+C
-    process.on('SIGINT', () => {
-      server.close();
-      process.exit(0);
-    });
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[claude-quota] Dashboard error: ${msg}`);
-    process.exitCode = 1;
-  }
-}
-
 if (argvPath && isSame(argvPath, scriptPath)) {
-  if (process.argv.includes('--dashboard')) {
-    void dashboard();
-  } else if (process.argv.includes('--background')) {
+  if (process.argv.includes('--background')) {
     // Background refresh: update cache silently, no render
     void getUsage({ forceRefresh: true });
   } else {
