@@ -72,19 +72,37 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
 }
 
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
+  const cache: CacheFile = { data, timestamp, ...opts };
+  writeCacheFile(getCachePath(), JSON.stringify(cache));
+}
+
+// ── Multi-instance coordination ───────────────────────────────────────────
+
+/**
+ * Bump the cache timestamp without changing data.
+ * Prevents parallel instances from all fetching at the same time.
+ */
+function bumpCacheTimestamp(now: number): void {
+  try {
+    const raw = fs.readFileSync(getCachePath(), 'utf8');
+    const cache: CacheFile = JSON.parse(raw);
+    // Only bump if the cache has good data and isn't rate-limited
+    if (!cache.data.apiUnavailable && !cache.rateLimitedCount) {
+      cache.timestamp = now;
+      writeCacheFile(getCachePath(), JSON.stringify(cache));
+    }
+  } catch { /* no cache to bump */ }
+}
+
+/** Symlink-safe cache file writer. */
+function writeCacheFile(filePath: string, content: string): void {
   try {
     const dir = getPluginDir();
     fs.mkdirSync(dir, { recursive: true });
-
-    const cachePath = getCachePath();
-    // Refuse to write through a symlink — prevents an attacker with home-dir write access
-    // from redirecting the cache file to an arbitrary path (symlink attack).
     try {
-      if (fs.lstatSync(cachePath).isSymbolicLink()) return;
+      if (fs.lstatSync(filePath).isSymbolicLink()) return;
     } catch { /* file does not exist yet — fine to create */ }
-
-    const cache: CacheFile = { data, timestamp, ...opts };
-    fs.writeFileSync(cachePath, JSON.stringify(cache), 'utf8');
+    fs.writeFileSync(filePath, content, 'utf8');
   } catch { /* ignore */ }
 }
 
@@ -192,6 +210,9 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
 
   const planName = getPlanName(creds.subscriptionType, creds.rateLimitTier);
   if (!planName) return none; // API user
+
+  // Bump cache timestamp to prevent parallel instances from also fetching
+  bumpCacheTimestamp(now);
 
   // Fetch
   const result = await fetchApi(creds.accessToken);
