@@ -4,7 +4,7 @@ import { getUsage, getCreditGrant } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
-import { buildDashboardData, generateDashboardHtml } from './dashboard.js';
+import { startDashboardServer } from './dashboard.js';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -71,45 +71,30 @@ const isSame = (a: string, b: string): boolean => {
   catch { return a === b; }
 };
 async function dashboard(): Promise<void> {
-  const [{ data: usage }, creditGrant] = await Promise.all([
-    getUsage({ forceRefresh: true }),
-    getCreditGrant(),
-  ]);
-
-  if (!usage) {
-    console.error('[claude-quota] No usage data available.');
-    process.exitCode = 1;
-    return;
-  }
-
-  // Merge credit grant
-  if (usage.extraUsage && creditGrant !== null) {
-    usage.extraUsage = { ...usage.extraUsage, creditGrant };
-  }
-
-  const data = buildDashboardData(usage, creditGrant);
-  const html = generateDashboardHtml(data);
-
-  // Write to plugin dir so the file persists for reloading
-  const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
-  mkdirSync(dir, { recursive: true });
-  const htmlPath = join(dir, 'dashboard.html');
-  writeFileSync(htmlPath, html, 'utf8');
-
-  // Open in default browser
   try {
-    if (process.platform === 'darwin') {
-      execFileSync('open', [htmlPath], { stdio: 'ignore' });
-    } else if (process.platform === 'linux') {
-      spawn('xdg-open', [htmlPath], { detached: true, stdio: 'ignore' }).unref();
-    } else {
-      // Windows or unknown — just print the path
-      console.log(htmlPath);
-      return;
-    }
-    console.log(`Dashboard opened: ${htmlPath}`);
-  } catch {
-    console.log(`Dashboard written to: ${htmlPath}`);
+    const { url, server } = await startDashboardServer();
+
+    // Open in default browser
+    try {
+      if (process.platform === 'darwin') {
+        execFileSync('open', [url], { stdio: 'ignore' });
+      } else if (process.platform === 'linux') {
+        spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+      }
+    } catch { /* browser open failed — URL is printed below */ }
+
+    console.log(`Dashboard running at ${url}`);
+    console.log('Press Ctrl+C to stop.');
+
+    // Keep alive until Ctrl+C
+    process.on('SIGINT', () => {
+      server.close();
+      process.exit(0);
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    console.error(`[claude-quota] Dashboard error: ${msg}`);
+    process.exitCode = 1;
   }
 }
 
