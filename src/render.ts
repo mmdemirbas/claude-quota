@@ -81,16 +81,17 @@ function moneyValueColor(ratio: number): string {
 /**
  * Render a progress bar of `width` block characters.
  *
- * When `projectedPct` is supplied the empty portion is coloured to convey
- * the projected end-of-window outcome:
- *   - projected ≥ 100: empty chars in red  → quota will be exhausted
- *   - projected < 100: empty chars split at the projected boundary:
- *       [current → projected]: dim ░   (quota expected to be consumed)
- *       [projected → 100]:     gray ░  (wasted quota — same glyph, dimmer color)
+ * Four visual layers (left to right):
+ *   1. Solid fill █ — consumed quota, in severity color
+ *   2. Darker fill █ — over-consumed portion (ideal → current), dimmer when over-pace
+ *   3. Projected fill ░ — expected consumption (current → projected), dim
+ *   4. Wasted/empty ░ — quota that won't be used, gray
+ *
+ * An ideal-pace marker ▕ is placed at the elapsed fraction position.
  *
  * Exported for testing.
  */
-export function bar(pct: number, width: number, colorFn: (p: number) => string, projectedPct?: number): string {
+export function bar(pct: number, width: number, colorFn: (p: number) => string, projectedPct?: number, elapsedFraction?: number): string {
   const safe = Math.max(0, Math.min(100, pct));
   const filled = Math.round((safe / 100) * width);
   const empty = width - filled;
@@ -99,16 +100,53 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(empty)}${R}`;
   }
 
-  if (projectedPct >= 100) {
-    // Over pace: all remaining quota will be consumed — warn in red
-    return `${colorFn(safe)}${'█'.repeat(filled)}${RED}${'░'.repeat(empty)}${R}`;
+  const idealPos = elapsedFraction !== undefined
+    ? Math.round(elapsedFraction * width)
+    : -1; // no marker
+
+  const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
+  const color = colorFn(safe);
+  const overPace = projectedPct >= 100;
+
+  // Assign each position a segment type, then batch identical segments
+  const enum Seg { Solid, Dark, ProjRed, ProjDim, Wasted, Marker }
+  const slots: Seg[] = [];
+  for (let i = 0; i < width; i++) {
+    if (i === idealPos && idealPos > 0 && idealPos < width) {
+      slots.push(Seg.Marker);
+    } else if (i < filled) {
+      slots.push(idealPos >= 0 && i >= idealPos ? Seg.Dark : Seg.Solid);
+    } else if (i < projPos) {
+      slots.push(overPace ? Seg.ProjRed : Seg.ProjDim);
+    } else {
+      slots.push(Seg.Wasted);
+    }
   }
 
-  // Under pace: split empty at the projected boundary
-  const projFilled = Math.min(width, Math.round((projectedPct / 100) * width));
-  const projPath = Math.max(0, projFilled - filled); // will be consumed
-  const wasted = empty - projPath;                   // won't be reached — same ░ glyph, gray color
-  return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(projPath)}${GRAY}${'░'.repeat(wasted)}${R}`;
+  // Render batched runs
+  let result = '';
+  let i = 0;
+  while (i < width) {
+    const seg = slots[i];
+    if (seg === Seg.Marker) {
+      result += `${R}${DIM}▕`;
+      i++;
+      continue;
+    }
+    let run = 0;
+    while (i + run < width && slots[i + run] === seg) run++;
+    const chars = seg === Seg.Solid || seg === Seg.Dark ? '█'.repeat(run) : '░'.repeat(run);
+    switch (seg) {
+      case Seg.Solid:   result += `${color}${chars}`; break;
+      case Seg.Dark:    result += `${DIM}${color}${chars}`; break;
+      case Seg.ProjRed: result += `${RED}${chars}`; break;
+      case Seg.ProjDim: result += `${DIM}${chars}`; break;
+      case Seg.Wasted:  result += `${GRAY}${chars}`; break;
+    }
+    i += run;
+  }
+
+  return `${result}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
@@ -157,6 +195,8 @@ const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface PaceResult {
   projected: number;
+  /** Fraction of the window elapsed (0–1). */
+  elapsed: number;
   /** ↘ under pace · → on pace · ↗ over pace */
   glyph: string;
   glyphColor: string;
@@ -193,7 +233,7 @@ export function calcPace(
     glyph = '↗'; glyphColor = projected > 100 ? RED : YELLOW;
   }
 
-  return { projected, glyph, glyphColor };
+  return { projected, elapsed: elapsedFraction, glyph, glyphColor };
 }
 
 /**
@@ -307,7 +347,7 @@ function renderQuota(
 
   // Compute pace early so projected% can colour the bar even in no-pace tier
   const pace = calcPace(pct, resetAt, windowMs, now);
-  const b = bar(pct, 10, quotaColor, pace?.projected);
+  const b = bar(pct, 10, quotaColor, pace?.projected, pace?.elapsed);
 
   if (detail === 'no-pace') {
     return `${dim(label)}${b} ${quotaColor(pct)}${pctStr}${R}`;

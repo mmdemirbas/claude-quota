@@ -247,20 +247,31 @@ body {
   overflow: hidden;
 }
 .pace-bar-fill {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 1s ease;
-}
-.pace-bar-ideal {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: 0; bottom: 0; left: 0;
+  border-radius: 4px 0 0 4px;
+}
+.pace-bar-over {
+  position: absolute;
+  top: 0; bottom: 0;
+  filter: brightness(0.55);
+}
+.pace-bar-proj {
+  position: absolute;
+  top: 0; bottom: 0;
+  background-image: repeating-linear-gradient(
+    45deg, transparent, transparent 3px, rgba(255,255,255,0.08) 3px, rgba(255,255,255,0.08) 6px);
+}
+.pace-bar-marker {
+  position: absolute;
+  top: -1px; bottom: -1px;
   width: 2px;
   background: var(--text);
-  opacity: 0.5;
-  z-index: 1;
+  opacity: 0.7;
+  z-index: 2;
+  border-radius: 1px;
 }
-.pace-bar-ideal::after {
+.pace-bar-marker::after {
   content: 'ideal';
   position: absolute;
   bottom: -14px;
@@ -563,19 +574,35 @@ function renderDashboard() {
   if (paceData.length > 0) {
     html += '<div class="panel"><h2>Pace Analysis</h2>';
     html += '<p style="font-size:12px;color:var(--text2);margin-bottom:14px">'
-      + 'Current usage vs ideal pace. The white line marks where you should be if consuming evenly.</p>';
+      + 'Current usage vs ideal pace. The marker shows where you should be if consuming evenly.</p>';
 
     for (const q of paceData) {
       const idealPct = Math.round(q.pace.elapsed * 100);
-      const barPct = Math.min(q.pct, 100);
+      const curPct = Math.min(q.pct, 100);
+      const projPct = Math.min(q.pace.projected, 100);
       const color = pctColor(q.pct);
+      const isOver = q.pct > idealPct;
+
+      // Layer 1: solid fill (up to min(current, ideal) when over-pace, else full current)
+      const solidEnd = isOver ? idealPct : curPct;
+      var layers = '<div class="pace-bar-fill" style="width:' + solidEnd + '%;background:' + color + '"></div>';
+
+      // Layer 2: darker fill for over-consumed portion (ideal → current)
+      if (isOver) {
+        layers += '<div class="pace-bar-over" style="left:' + idealPct + '%;width:' + (curPct - idealPct) + '%;background:' + color + '"></div>';
+      }
+
+      // Layer 3: projected hatched fill (current → projected)
+      if (projPct > curPct) {
+        layers += '<div class="pace-bar-proj" style="left:' + curPct + '%;width:' + (projPct - curPct) + '%;background:' + color + ';opacity:0.35"></div>';
+      }
+
+      // Layer 4: ideal marker
+      layers += '<div class="pace-bar-marker" style="left:' + idealPct + '%"></div>';
 
       html += '<div class="pace-row">'
         + '<div class="pace-label">' + q.id + '</div>'
-        + '<div class="pace-bar-track">'
-        + '<div class="pace-bar-fill" style="width:' + barPct + '%;background:' + color + '"></div>'
-        + '<div class="pace-bar-ideal" style="left:' + idealPct + '%"></div>'
-        + '</div>'
+        + '<div class="pace-bar-track">' + layers + '</div>'
         + '<div class="pace-val" style="color:' + color + '">' + q.pct + '%</div>'
         + '</div>';
     }
