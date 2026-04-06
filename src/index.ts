@@ -4,7 +4,7 @@ import { getUsage, getCreditGrant } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
-import { buildDashboardData, writeDashboardFiles } from './dashboard.js';
+import { ensureDashboardHtml } from './dashboard.js';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,14 +13,10 @@ import { spawn } from 'node:child_process';
 
 const DEBUG = process.env.CLAUDE_QUOTA_DEBUG === '1';
 
-function getPluginDir(): string {
-  return join(homedir(), '.claude', 'plugins', 'claude-quota');
-}
-
 function debugDump(filename: string, data: unknown): void {
   if (!DEBUG) return;
   try {
-    const dir = getPluginDir();
+    const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, filename), JSON.stringify(data, null, 2), 'utf8');
   } catch { /* ignore */ }
@@ -34,15 +30,6 @@ function spawnBackgroundRefresh(scriptPath: string): void {
     });
     child.unref();
   } catch { /* ignore */ }
-}
-
-function writeDashboard(usage: Parameters<typeof buildDashboardData>[0], creditGrant: number | null): void {
-  try {
-    const data = buildDashboardData(usage, creditGrant);
-    const dir = getPluginDir();
-    mkdirSync(dir, { recursive: true });
-    writeDashboardFiles(data, dir);
-  } catch { /* ignore — dashboard is best-effort */ }
 }
 
 async function main(): Promise<void> {
@@ -71,8 +58,8 @@ async function main(): Promise<void> {
     const { columns, rows } = terminalDims(stdin);
     render({ stdin, usage, git, columns, rows });
 
-    // Update dashboard HTML for browser viewing
-    if (usage) writeDashboard(usage, creditGrant);
+    // Ensure the dashboard HTML shell exists (data.js is written by usage.ts)
+    ensureDashboardHtml();
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     console.log(`[claude-quota] Error: ${msg}`);

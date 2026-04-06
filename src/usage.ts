@@ -49,6 +49,10 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
     const raw = fs.readFileSync(getCachePath(), 'utf8');
     const cache: CacheFile = JSON.parse(raw);
 
+    // Ensure data.js exists for the browser dashboard
+    const dataJsPath = path.join(getPluginDir(), 'data.js');
+    try { if (!fs.existsSync(dataJsPath)) writeCacheFile(dataJsPath, `var DATA=${raw};`); } catch { /* ignore */ }
+
     // Handle rate-limit backoff
     if (cache.data.apiError === 'rate-limited' && cache.rateLimitedCount) {
       const backoff = Math.min(
@@ -86,7 +90,10 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
 
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
   const cache: CacheFile = { data, timestamp, ...opts };
-  writeCacheFile(getCachePath(), JSON.stringify(cache));
+  const json = JSON.stringify(cache);
+  writeCacheFile(getCachePath(), json);
+  // Also write data.js for the browser dashboard (same data, JS-loadable wrapper)
+  writeCacheFile(path.join(getPluginDir(), 'data.js'), `var DATA=${json};`);
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -219,6 +226,9 @@ function readCreditGrantCache(now: number): number | null {
   try {
     const raw = fs.readFileSync(getCreditGrantCachePath(), 'utf8');
     const cache: CreditGrantCacheFile = JSON.parse(raw);
+    // Ensure credit-grant.js exists for the browser dashboard
+    const cgJsPath = path.join(getPluginDir(), 'credit-grant.js');
+    try { if (!fs.existsSync(cgJsPath)) writeCacheFile(cgJsPath, `var CREDIT_GRANT=${raw};`); } catch { /* ignore */ }
     if (now - cache.timestamp < CREDIT_GRANT_CACHE_TTL_MS) {
       return cache.creditGrant;
     }
@@ -228,7 +238,9 @@ function readCreditGrantCache(now: number): number | null {
 
 function writeCreditGrantCache(creditGrant: number | null, timestamp: number): void {
   const cache: CreditGrantCacheFile = { creditGrant, timestamp };
-  writeCacheFile(getCreditGrantCachePath(), JSON.stringify(cache));
+  const json = JSON.stringify(cache);
+  writeCacheFile(getCreditGrantCachePath(), json);
+  writeCacheFile(path.join(getPluginDir(), 'credit-grant.js'), `var CREDIT_GRANT=${json};`);
 }
 
 // ── Generic HTTPS JSON GET ────────────────────────────────────────────────

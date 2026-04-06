@@ -1,80 +1,17 @@
 import { writeFileSync, existsSync } from 'node:fs';
-import type { UsageData } from './types.js';
-
-/** Data embedded in the dashboard HTML as JSON. */
-export interface DashboardData {
-  planName: string;
-  fetchedAt: number; // unix ms
-  now: number; // unix ms
-  quotas: DashboardQuota[];
-  extraUsage: {
-    enabled: boolean;
-    monthlyLimit: number; // dollars
-    usedCredits: number; // dollars
-    creditGrant: number | null; // dollars
-  } | null;
-}
-
-export interface DashboardQuota {
-  id: string;
-  label: string;
-  pct: number | null;
-  resetAt: number | null; // unix ms
-  windowMs: number;
-}
-
-const FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
-const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
-
-export function buildDashboardData(usage: UsageData, creditGrant: number | null): DashboardData {
-  const now = Date.now();
-  const quotas: DashboardQuota[] = [];
-
-  if (usage.fiveHour !== null) {
-    quotas.push({
-      id: '5h', label: '5-Hour', pct: usage.fiveHour,
-      resetAt: usage.fiveHourResetAt?.getTime() ?? null, windowMs: FIVE_HOUR_MS,
-    });
-  }
-  if (usage.sonnet !== null) {
-    quotas.push({
-      id: 'snt', label: 'Sonnet 7d', pct: usage.sonnet,
-      resetAt: usage.sonnetResetAt?.getTime() ?? null, windowMs: SEVEN_DAY_MS,
-    });
-  }
-  if (usage.sevenDay !== null) {
-    quotas.push({
-      id: '7d', label: '7-Day', pct: usage.sevenDay,
-      resetAt: usage.sevenDayResetAt?.getTime() ?? null, windowMs: SEVEN_DAY_MS,
-    });
-  }
-  if (usage.opus !== null) {
-    quotas.push({
-      id: 'ops', label: 'Opus 7d', pct: usage.opus,
-      resetAt: usage.opusResetAt?.getTime() ?? null, windowMs: SEVEN_DAY_MS,
-    });
-  }
-
-  let extraUsage = null;
-  if (usage.extraUsage?.enabled) {
-    extraUsage = {
-      enabled: true,
-      monthlyLimit: usage.extraUsage.monthlyLimit,
-      usedCredits: usage.extraUsage.usedCredits,
-      creditGrant: creditGrant ?? usage.extraUsage.creditGrant,
-    };
-  }
-
-  return {
-    planName: usage.planName,
-    fetchedAt: usage.fetchedAt ?? now,
-    now,
-    quotas,
-    extraUsage,
-  };
-}
-
 import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+/** Write dashboard.html to the plugin dir if it doesn't exist yet. */
+export function ensureDashboardHtml(): void {
+  try {
+    const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
+    const htmlPath = join(dir, 'dashboard.html');
+    if (!existsSync(htmlPath)) {
+      writeFileSync(htmlPath, DASHBOARD_HTML, 'utf8');
+    }
+  } catch { /* ignore */ }
+}
 
 
 // ── Embedded CSS ──────────────────────────────────────────────────────────
@@ -406,10 +343,41 @@ body {
 // ── Embedded JS ──────────────────────────────────────────────────────────
 
 const JS = `
+var FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
+var SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+
 function renderDashboard() {
-  const d = DATA;
-  if (!d) return;
-  const app = document.getElementById('app');
+  if (!DATA || !DATA.data) return;
+  var raw = DATA.lastGoodData || DATA.data;
+  if (raw.apiUnavailable && !DATA.lastGoodData) return;
+
+  // Build dashboard data from cache shape
+  var now = Date.now();
+  var quotas = [];
+  if (raw.fiveHour !== null && raw.fiveHour !== undefined)
+    quotas.push({ id: '5h', label: '5-Hour', pct: raw.fiveHour,
+      resetAt: raw.fiveHourResetAt ? new Date(raw.fiveHourResetAt).getTime() : null, windowMs: FIVE_HOUR_MS });
+  if (raw.sonnet !== null && raw.sonnet !== undefined)
+    quotas.push({ id: 'snt', label: 'Sonnet 7d', pct: raw.sonnet,
+      resetAt: raw.sonnetResetAt ? new Date(raw.sonnetResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  if (raw.sevenDay !== null && raw.sevenDay !== undefined)
+    quotas.push({ id: '7d', label: '7-Day', pct: raw.sevenDay,
+      resetAt: raw.sevenDayResetAt ? new Date(raw.sevenDayResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  if (raw.opus !== null && raw.opus !== undefined)
+    quotas.push({ id: 'ops', label: 'Opus 7d', pct: raw.opus,
+      resetAt: raw.opusResetAt ? new Date(raw.opusResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+
+  var extraUsage = null;
+  if (raw.extraUsage && raw.extraUsage.enabled) {
+    var cg = (typeof CREDIT_GRANT !== 'undefined' && CREDIT_GRANT && CREDIT_GRANT.creditGrant) || raw.extraUsage.creditGrant || null;
+    extraUsage = { enabled: true, monthlyLimit: raw.extraUsage.monthlyLimit,
+      usedCredits: raw.extraUsage.usedCredits, creditGrant: cg };
+  }
+
+  var d = { planName: raw.planName, fetchedAt: raw.fetchedAt || DATA.timestamp, now: now,
+    quotas: quotas, extraUsage: extraUsage };
+
+  var app = document.getElementById('app');
 
   // ── Helpers ────────────────────────────────────────────
   function fmt(ms) {
@@ -707,15 +675,26 @@ function renderDashboard() {
 
 // ── Loader: polls data.js every 5s ──────────────────────────────────────
 
+// ── Loader: polls data.js + credit-grant.js every 5s ────────────────────
+
 const LOADER = `
 var DATA = null;
+var CREDIT_GRANT = null;
 var _seq = 0;
-function _load() {
+function _loadScript(src, cb) {
   var s = document.createElement('script');
-  s.src = 'data.js?_=' + (++_seq);
-  s.onload = function() { if (typeof renderDashboard==='function') renderDashboard(); s.remove(); };
-  s.onerror = function() { s.remove(); };
+  s.src = src + '?_=' + _seq;
+  s.onload = function() { s.remove(); if (cb) cb(); };
+  s.onerror = function() { s.remove(); if (cb) cb(); };
   document.head.appendChild(s);
+}
+function _load() {
+  ++_seq;
+  _loadScript('credit-grant.js', function() {
+    _loadScript('data.js', function() {
+      if (typeof renderDashboard === 'function') renderDashboard();
+    });
+  });
 }
 _load();
 setInterval(_load, 5000);
@@ -743,13 +722,3 @@ ${JS}
 </script>
 </body>
 </html>`;
-
-// ── Public API ──────────────────────────────────────────────────────────
-
-/** Write data.js (tiny, every render) and dashboard.html (once, if missing). */
-export function writeDashboardFiles(data: DashboardData, dir: string): void {
-  writeFileSync(join(dir, 'data.js'), `var DATA = ${JSON.stringify(data)};`, 'utf8');
-  if (!existsSync(join(dir, 'dashboard.html'))) {
-    writeFileSync(join(dir, 'dashboard.html'), DASHBOARD_HTML, 'utf8');
-  }
-}
