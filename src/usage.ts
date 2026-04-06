@@ -22,7 +22,7 @@ function getPluginDir(): string {
 }
 
 function getCachePath(): string {
-  return path.join(getPluginDir(), '.usage-cache.json');
+  return path.join(getPluginDir(), 'data.js');
 }
 
 function getProfileCachePath(): string {
@@ -30,7 +30,23 @@ function getProfileCachePath(): string {
 }
 
 function getCreditGrantCachePath(): string {
-  return path.join(getPluginDir(), '.credit-grant-cache.json');
+  return path.join(getPluginDir(), 'credit-grant.js');
+}
+
+/** Read JSON from a .js file that wraps it as `var NAME=<json>;` */
+function readJsCache(filePath: string): string | null {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const eqIdx = content.indexOf('=');
+    if (eqIdx < 0) return null;
+    // Strip "var NAME=" prefix and trailing ";"
+    return content.slice(eqIdx + 1).replace(/;\s*$/, '');
+  } catch { return null; }
+}
+
+/** Write JSON to a .js file as `var NAME=<json>;` */
+function writeJsCache(filePath: string, varName: string, json: string): void {
+  writeCacheFile(filePath, `var ${varName}=${json};`);
 }
 
 // ── Cache ──────────────────────────────────────────────────────────────────
@@ -46,12 +62,9 @@ function hydrateDates(data: UsageData): UsageData {
 
 function readCache(now: number): { data: UsageData; isStale: boolean } | null {
   try {
-    const raw = fs.readFileSync(getCachePath(), 'utf8');
+    const raw = readJsCache(getCachePath());
+    if (!raw) return null;
     const cache: CacheFile = JSON.parse(raw);
-
-    // Ensure data.js exists for the browser dashboard
-    const dataJsPath = path.join(getPluginDir(), 'data.js');
-    try { if (!fs.existsSync(dataJsPath)) writeCacheFile(dataJsPath, `var DATA=${raw};`); } catch { /* ignore */ }
 
     // Handle rate-limit backoff
     if (cache.data.apiError === 'rate-limited' && cache.rateLimitedCount) {
@@ -90,10 +103,7 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
 
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
   const cache: CacheFile = { data, timestamp, ...opts };
-  const json = JSON.stringify(cache);
-  writeCacheFile(getCachePath(), json);
-  // Also write data.js for the browser dashboard (same data, JS-loadable wrapper)
-  writeCacheFile(path.join(getPluginDir(), 'data.js'), `var DATA=${json};`);
+  writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -182,12 +192,12 @@ export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsag
  */
 function bumpCacheTimestamp(now: number): void {
   try {
-    const raw = fs.readFileSync(getCachePath(), 'utf8');
+    const raw = readJsCache(getCachePath());
+    if (!raw) return;
     const cache: CacheFile = JSON.parse(raw);
-    // Only bump if the cache has good data and isn't rate-limited
     if (!cache.data.apiUnavailable && !cache.rateLimitedCount) {
       cache.timestamp = now;
-      writeCacheFile(getCachePath(), JSON.stringify(cache));
+      writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
     }
   } catch { /* no cache to bump */ }
 }
@@ -224,11 +234,9 @@ function writeProfileCache(orgUUID: string, timestamp: number): void {
 
 function readCreditGrantCache(now: number): number | null {
   try {
-    const raw = fs.readFileSync(getCreditGrantCachePath(), 'utf8');
+    const raw = readJsCache(getCreditGrantCachePath());
+    if (!raw) return null;
     const cache: CreditGrantCacheFile = JSON.parse(raw);
-    // Ensure credit-grant.js exists for the browser dashboard
-    const cgJsPath = path.join(getPluginDir(), 'credit-grant.js');
-    try { if (!fs.existsSync(cgJsPath)) writeCacheFile(cgJsPath, `var CREDIT_GRANT=${raw};`); } catch { /* ignore */ }
     if (now - cache.timestamp < CREDIT_GRANT_CACHE_TTL_MS) {
       return cache.creditGrant;
     }
@@ -238,9 +246,7 @@ function readCreditGrantCache(now: number): number | null {
 
 function writeCreditGrantCache(creditGrant: number | null, timestamp: number): void {
   const cache: CreditGrantCacheFile = { creditGrant, timestamp };
-  const json = JSON.stringify(cache);
-  writeCacheFile(getCreditGrantCachePath(), json);
-  writeCacheFile(path.join(getPluginDir(), 'credit-grant.js'), `var CREDIT_GRANT=${json};`);
+  writeJsCache(getCreditGrantCachePath(), 'CREDIT_GRANT', JSON.stringify(cache));
 }
 
 // ── Generic HTTPS JSON GET ────────────────────────────────────────────────
@@ -369,10 +375,12 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
       let prevCount = 0;
       let lastGoodData: UsageData | undefined;
       try {
-        const raw = fs.readFileSync(getCachePath(), 'utf8');
-        const prev: CacheFile = JSON.parse(raw);
-        prevCount = prev.rateLimitedCount ?? 0;
-        lastGoodData = prev.lastGoodData ?? (!prev.data.apiUnavailable ? prev.data : undefined);
+        const rawJs = readJsCache(getCachePath());
+        if (rawJs) {
+          const prev: CacheFile = JSON.parse(rawJs);
+          prevCount = prev.rateLimitedCount ?? 0;
+          lastGoodData = prev.lastGoodData ?? (!prev.data.apiUnavailable ? prev.data : undefined);
+        }
       } catch { /* no prior cache — first rate-limit */ }
       writeCache(failure, now, {
         rateLimitedCount: prevCount + 1,
