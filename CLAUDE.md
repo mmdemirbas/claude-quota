@@ -14,7 +14,8 @@ src/
 ├── git.ts          # Git branch and dirty status
 ├── ansi.ts         # ANSI-aware string utilities (visibleLength, truncate)
 ├── terminal.ts     # Terminal dimension resolution (stderr TTY → env vars → defaults)
-└── render.ts       # ANSI status line rendering (width + height adaptive)
+├── render.ts       # ANSI status line rendering (width + height adaptive)
+└── dashboard.ts    # Single-page HTML dashboard generator (--dashboard flag)
 ```
 
 ## Build & Test
@@ -25,6 +26,7 @@ src/
 ./run stdin            # pipe mock JSON to test output
 ./run install          # build + npm link (makes global claude-quota binary point here)
 ./run release [patch]  # bump version, build, test, commit, push, tag → triggers npm publish
+claude-quota --dashboard  # generate and open HTML usage dashboard in browser
 ```
 
 ## How the Plugin Works
