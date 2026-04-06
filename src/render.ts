@@ -127,14 +127,14 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     const overFill = filled - normalFill;
     const bluePart = Math.max(0, projPos - filled);
     const grayPart = width - filled - bluePart;
-    return `${color}${'█'.repeat(normalFill)}${darken(color)}${'█'.repeat(overFill)}${color}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
+    return `${color}${'█'.repeat(normalFill)}${darken(color)}${'█'.repeat(overFill)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
   }
 
   // Under-pace: consumed, green headroom to ideal, blue projected above ideal, gray rest
   const greenPart = Math.max(0, idealPos - filled);
   const bluePart = Math.max(0, projPos - idealPos);
   const grayPart = width - filled - greenPart - bluePart;
-  return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${color}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
+  return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
