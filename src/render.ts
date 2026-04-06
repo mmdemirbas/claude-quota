@@ -18,8 +18,12 @@ const GRAY = '\x1b[90m'; // bright black — for wasted quota in bars
 const c = (color: string, text: string) => `${color}${text}${R}`;
 const dim = (text: string) => c(DIM, text);
 
-/** Map bright ANSI colors (90–97) to their darker counterparts (30–37). */
-const darken = (color: string): string => color.replace(/\[9(\d)m/, '[3$1m');
+/** Produce a darker variant of an ANSI color.
+ *  Bright (90–97) → dark (30–37); already-dark (30–37) → DIM prefix. */
+const darken = (color: string): string => {
+  const bright = color.replace(/\[9(\d)m/, '[3$1m');
+  return bright !== color ? bright : `${DIM}${color}`;
+};
 
 // ── Model name display ─────────────────────────────────────────────────────
 
