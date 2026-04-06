@@ -109,12 +109,12 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
   const overPace = projectedPct >= 100;
 
   // Assign each position a segment type, then batch identical segments
-  const enum Seg { Solid, Dark, ProjRed, ProjDim, Wasted, Marker }
+  const WHITE = '\x1b[97m'; // bright white — ideal-pace marker
+
+  const enum Seg { Solid, Dark, ProjRed, ProjDim, Wasted }
   const slots: Seg[] = [];
   for (let i = 0; i < width; i++) {
-    if (i === idealPos && idealPos > 0 && idealPos < width) {
-      slots.push(Seg.Marker);
-    } else if (i < filled) {
+    if (i < filled) {
       slots.push(idealPos >= 0 && i >= idealPos ? Seg.Dark : Seg.Solid);
     } else if (i < projPos) {
       slots.push(overPace ? Seg.ProjRed : Seg.ProjDim);
@@ -123,18 +123,20 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     }
   }
 
-  // Render batched runs
+  // Render batched runs; at idealPos emit a single char in bright white
   let result = '';
   let i = 0;
   while (i < width) {
-    const seg = slots[i];
-    if (seg === Seg.Marker) {
-      result += `${R}${DIM}▕`;
+    // Ideal marker: same glyph as its segment, bright white — no gap
+    if (i === idealPos && idealPos > 0 && idealPos < width) {
+      const glyph = i < filled ? '█' : '░';
+      result += `${WHITE}${glyph}`;
       i++;
       continue;
     }
+    const seg = slots[i];
     let run = 0;
-    while (i + run < width && slots[i + run] === seg) run++;
+    while (i + run < width && slots[i + run] === seg && (i + run) !== idealPos) run++;
     const chars = seg === Seg.Solid || seg === Seg.Dark ? '█'.repeat(run) : '░'.repeat(run);
     switch (seg) {
       case Seg.Solid:   result += `${color}${chars}`; break;
