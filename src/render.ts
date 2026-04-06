@@ -18,9 +18,6 @@ const GRAY = '\x1b[90m'; // bright black — for wasted quota in bars
 const c = (color: string, text: string) => `${color}${text}${R}`;
 const dim = (text: string) => c(DIM, text);
 
-/** Map bright ANSI colors (90–97) to their darker counterparts (30–37). */
-const darken = (color: string): string => color.replace(/\[9(\d)m/, '[3$1m');
-
 // ── Model name display ─────────────────────────────────────────────────────
 
 function extractFamily(displayName: string): string {
@@ -116,12 +113,21 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     return `${color}${'█'.repeat(filled)}${DIM}${'░'.repeat(projPath)}${GRAY}${'░'.repeat(wasted)}${R}`;
   }
 
-  // Two-tone fill: normal up to ideal, darker beyond ideal
   const idealPos = Math.round(elapsedFraction * width);
-  const normalFill = Math.min(filled, idealPos);
-  const darkFill = filled - normalFill;
+  const isOverPace = filled > idealPos;
 
-  return `${color}${'█'.repeat(normalFill)}${darken(color)}${'█'.repeat(darkFill)}${DIM}${'░'.repeat(empty)}${R}`;
+  if (isOverPace) {
+    // Over-pace: normal up to ideal, red beyond ideal
+    const normalFill = idealPos;
+    const overFill = filled - normalFill;
+    return `${color}${'█'.repeat(normalFill)}${RED}${'█'.repeat(overFill)}${DIM}${'░'.repeat(empty)}${R}`;
+  }
+
+  // Under-pace: consumed, green projected headroom, gray wasted
+  const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
+  const greenPart = Math.max(0, projPos - filled);
+  const grayPart = width - filled - greenPart;
+  return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
@@ -418,7 +424,7 @@ function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): s
   const projectedMoneyPct = projectedSpend !== undefined
     ? Math.round((projectedSpend / monthlyLimit) * 100)
     : undefined;
-  const b = bar(usedPct, 10, moneyBarColor, projectedMoneyPct);
+  const b = bar(usedPct, 10, moneyBarColor, projectedMoneyPct, elapsedFraction >= 0.02 ? elapsedFraction : undefined);
 
   if (detail === 'no-pace') {
     return `${dim(' ●$:')}${b} ${moneyValueColor(ratio)}${valueStr}${R}${balStr}`;
