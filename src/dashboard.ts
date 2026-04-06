@@ -1,3 +1,4 @@
+import { writeFileSync, existsSync } from 'node:fs';
 import type { UsageData } from './types.js';
 
 /** Data embedded in the dashboard HTML as JSON. */
@@ -73,30 +74,7 @@ export function buildDashboardData(usage: UsageData, creditGrant: number | null)
   };
 }
 
-export function generateDashboardHtml(data: DashboardData): string {
-  const json = JSON.stringify(data);
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="5">
-<title>Claude Usage Dashboard</title>
-<style>
-${CSS}
-</style>
-</head>
-<body>
-<div id="app"></div>
-<script>
-const DATA = ${json};
-</script>
-<script>
-${JS}
-</script>
-</body>
-</html>`;
-}
+import { join } from 'node:path';
 
 
 // ── Embedded CSS ──────────────────────────────────────────────────────────
@@ -428,8 +406,9 @@ body {
 // ── Embedded JS ──────────────────────────────────────────────────────────
 
 const JS = `
-(function() {
+function renderDashboard() {
   const d = DATA;
+  if (!d) return;
   const app = document.getElementById('app');
 
   // ── Helpers ────────────────────────────────────────────
@@ -723,5 +702,54 @@ const JS = `
     + '</div>';
 
   app.innerHTML = html;
-})();
+}
 `;
+
+// ── Loader: polls data.js every 5s ──────────────────────────────────────
+
+const LOADER = `
+var DATA = null;
+var _seq = 0;
+function _load() {
+  var s = document.createElement('script');
+  s.src = 'data.js?_=' + (++_seq);
+  s.onload = function() { if (typeof renderDashboard==='function') renderDashboard(); s.remove(); };
+  s.onerror = function() { s.remove(); };
+  document.head.appendChild(s);
+}
+_load();
+setInterval(_load, 5000);
+`;
+
+// ── Static HTML shell ───────────────────────────────────────────────────
+
+const DASHBOARD_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Usage Dashboard</title>
+<style>
+${CSS}
+</style>
+</head>
+<body>
+<div id="app"><div class="empty">Waiting for data&hellip;</div></div>
+<script>
+${LOADER}
+</script>
+<script>
+${JS}
+</script>
+</body>
+</html>`;
+
+// ── Public API ──────────────────────────────────────────────────────────
+
+/** Write data.js (tiny, every render) and dashboard.html (once, if missing). */
+export function writeDashboardFiles(data: DashboardData, dir: string): void {
+  writeFileSync(join(dir, 'data.js'), `var DATA = ${JSON.stringify(data)};`, 'utf8');
+  if (!existsSync(join(dir, 'dashboard.html'))) {
+    writeFileSync(join(dir, 'dashboard.html'), DASHBOARD_HTML, 'utf8');
+  }
+}

@@ -4,7 +4,7 @@ import { getUsage, getCreditGrant } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
-import { buildDashboardData, generateDashboardHtml } from './dashboard.js';
+import { buildDashboardData, writeDashboardFiles } from './dashboard.js';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -39,10 +39,9 @@ function spawnBackgroundRefresh(scriptPath: string): void {
 function writeDashboard(usage: Parameters<typeof buildDashboardData>[0], creditGrant: number | null): void {
   try {
     const data = buildDashboardData(usage, creditGrant);
-    const html = generateDashboardHtml(data);
     const dir = getPluginDir();
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'dashboard.html'), html, 'utf8');
+    writeDashboardFiles(data, dir);
   } catch { /* ignore — dashboard is best-effort */ }
 }
 
