@@ -100,55 +100,25 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(empty)}${R}`;
   }
 
-  const idealPos = elapsedFraction !== undefined
-    ? Math.round(elapsedFraction * width)
-    : -1; // no marker
-
-  const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
   const color = colorFn(safe);
-  const overPace = projectedPct >= 100;
 
-  // Assign each position a segment type, then batch identical segments
-  const WHITE = '\x1b[97m'; // bright white — ideal-pace marker
-
-  const enum Seg { Solid, Dark, ProjRed, ProjDim, Wasted }
-  const slots: Seg[] = [];
-  for (let i = 0; i < width; i++) {
-    if (i < filled) {
-      slots.push(idealPos >= 0 && i >= idealPos ? Seg.Dark : Seg.Solid);
-    } else if (i < projPos) {
-      slots.push(overPace ? Seg.ProjRed : Seg.ProjDim);
-    } else {
-      slots.push(Seg.Wasted);
+  if (elapsedFraction === undefined) {
+    // No pace info — original projected coloring
+    if (projectedPct >= 100) {
+      return `${color}${'█'.repeat(filled)}${RED}${'░'.repeat(empty)}${R}`;
     }
+    const projFilled = Math.min(width, Math.round((projectedPct / 100) * width));
+    const projPath = Math.max(0, projFilled - filled);
+    const wasted = empty - projPath;
+    return `${color}${'█'.repeat(filled)}${DIM}${'░'.repeat(projPath)}${GRAY}${'░'.repeat(wasted)}${R}`;
   }
 
-  // Render batched runs; at idealPos emit a single char in bright white
-  let result = '';
-  let i = 0;
-  while (i < width) {
-    // Ideal marker: same glyph as its segment, bright white — no gap
-    if (i === idealPos && idealPos > 0 && idealPos < width) {
-      const glyph = i < filled ? '█' : '░';
-      result += `${WHITE}${glyph}`;
-      i++;
-      continue;
-    }
-    const seg = slots[i];
-    let run = 0;
-    while (i + run < width && slots[i + run] === seg && (i + run) !== idealPos) run++;
-    const chars = seg === Seg.Solid || seg === Seg.Dark ? '█'.repeat(run) : '░'.repeat(run);
-    switch (seg) {
-      case Seg.Solid:   result += `${color}${chars}`; break;
-      case Seg.Dark:    result += `${DIM}${color}${chars}`; break;
-      case Seg.ProjRed: result += `${RED}${chars}`; break;
-      case Seg.ProjDim: result += `${DIM}${chars}`; break;
-      case Seg.Wasted:  result += `${GRAY}${chars}`; break;
-    }
-    i += run;
-  }
+  // Two-tone fill: normal up to ideal, darker beyond ideal
+  const idealPos = Math.round(elapsedFraction * width);
+  const normalFill = Math.min(filled, idealPos);
+  const darkFill = filled - normalFill;
 
-  return `${result}${R}`;
+  return `${color}${'█'.repeat(normalFill)}${DIM}${color}${'█'.repeat(darkFill)}${DIM}${'░'.repeat(empty)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
