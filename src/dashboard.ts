@@ -465,14 +465,23 @@ function renderDashboard() {
   }
 
   // ── Header ─────────────────────────────────────────────
+  var USAGE_URL = 'https://claude.ai/settings/usage';
+  var isRateLimited = DATA.data.apiError === 'rate-limited';
+  var rlBadge = isRateLimited
+    ? ' &middot; <span style="color:var(--yellow)">\\u21BB rate-limited</span>'
+    : '';
+
   let html = '<div class="header">'
     + '<h1><span>Claude</span> Usage Dashboard</h1>'
     + '<div class="meta">' + d.planName
     + ' &middot; fetched ' + fmtTime(d.fetchedAt)
+    + rlBadge
+    + ' &middot; <a href="' + USAGE_URL + '" target="_blank" style="color:var(--blue)">usage page \\u2197</a>'
     + '</div></div>';
 
   if (d.quotas.length === 0) {
-    html += '<div class="empty">No usage data available.</div>';
+    html += '<div class="empty">No usage data available.'
+      + '<br><a href="' + USAGE_URL + '" target="_blank" style="color:var(--blue)">View usage on claude.ai \\u2197</a></div>';
     app.innerHTML = html;
     return;
   }
