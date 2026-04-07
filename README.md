@@ -43,7 +43,7 @@ max 5x      │  5h:██░░░░░░░░  17% ↗139% ◔3h56m │  7d
 ### Color coding
 
 - **Context bar**: green < 70% → yellow 70–85% → red ≥ 85%
-- **Quota bars (filled `█`)**: blue < 75% → magenta 75–90% → red ≥ 90%
+- **Quota bars (filled `█`)**: blue < 75% → magenta 75–90% → red ≥ 90%. When over pace, up-to-pace portion is dim; over-pace portion is bright so excess stands out
 - **Quota bars (empty `░`)**: dim = projected path · gray = wasted quota (projected < 100%) · red = quota will run out (projected ≥ 100%)
 - **Pace glyph**: green `↘` under-pace · dim `→` on-pace · yellow/red `↗` over-pace
 - **Projected**: dim ≤ 79% · yellow 80–100% · red > 100%

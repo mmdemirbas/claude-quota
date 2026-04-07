@@ -248,11 +248,11 @@ body {
   position: absolute;
   top: 0; bottom: 0; left: 0;
   border-radius: 4px 0 0 4px;
+  filter: brightness(0.55);
 }
 .pace-bar-over {
   position: absolute;
   top: 0; bottom: 0;
-  filter: brightness(0.55);
 }
 .pace-bar-proj {
   position: absolute;
@@ -581,11 +581,11 @@ function renderDashboard() {
       const color = pctColor(q.pct);
       const isOver = q.pct > idealPct;
 
-      // Layer 1: solid fill (up to min(current, ideal) when over-pace, else full current)
+      // Layer 1: dim fill (up to min(current, ideal) when over-pace, else full current)
       const solidEnd = isOver ? idealPct : curPct;
       var layers = '<div class="pace-bar-fill" style="width:' + solidEnd + '%;background:' + color + '"></div>';
 
-      // Layer 2: darker fill for over-consumed portion (ideal → current)
+      // Layer 2: bright fill for over-consumed portion (ideal → current)
       if (isOver) {
         layers += '<div class="pace-bar-over" style="left:' + idealPct + '%;width:' + (curPct - idealPct) + '%;background:' + color + '"></div>';
       }

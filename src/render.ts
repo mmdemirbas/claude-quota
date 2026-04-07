@@ -85,8 +85,8 @@ function moneyValueColor(ratio: number): string {
  * Render a progress bar of `width` block characters.
  *
  * Four visual layers (left to right):
- *   1. Solid fill █ — consumed quota, in severity color
- *   2. Darker fill █ — over-consumed portion (ideal → current), dimmer when over-pace
+ *   1. Dim fill █ — consumed quota up to pace, darkened severity color
+ *   2. Bright fill █ — over-consumed portion (ideal → current), full severity color
  *   3. Projected fill ░ — expected consumption (current → projected), dim
  *   4. Wasted/empty ░ — quota that won't be used, gray
  *
@@ -122,12 +122,12 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
   const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
 
   if (isOverPace) {
-    // Over-pace: normal up to ideal, red over-consumed, blue projected, gray rest
+    // Over-pace: dim up to ideal, bright over-consumed, dim projected, gray rest
     const normalFill = idealPos;
     const overFill = filled - normalFill;
     const bluePart = Math.max(0, projPos - filled);
     const grayPart = width - filled - bluePart;
-    return `${color}${'█'.repeat(normalFill)}${darken(color)}${'█'.repeat(overFill)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
+    return `${darken(color)}${'█'.repeat(normalFill)}${R}${color}${'█'.repeat(overFill)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
   }
 
   // Under-pace: consumed, green headroom to ideal, blue projected above ideal, gray rest

@@ -52,7 +52,7 @@ src/
   - compact (9): drop bar, show label + pct only
 - **Terminal dimensions**: resolved from `process.stderr` (stays TTY when stdout is piped) → `$COLUMNS`/`$LINES` env vars → defaults (120×3)
 - **Pace indicators**: each quota shows current%, directional glyph (↘/→/↗), and projected end-of-window utilization
-- **Projected-use bar coloring**: empty `░` chars in the bar are coloured by outcome — dim for the projected-to-be-consumed portion, gray for wasted quota (projected < 100%), red when quota will run out (projected ≥ 100%)
+- **Bar coloring**: filled `█` up to pace is dim; over-pace `█` uses full severity color so excess stands out as actual usage. Empty `░` chars are coloured by outcome — dim for projected-to-be-consumed, gray for wasted quota (projected < 100%), red when quota will run out (projected ≥ 100%)
 - **Window-progress glyph**: `○◔◑◕●` replaces `↺` in the reset slot, showing how far into the quota window the current time is (20% steps per glyph)
 - **Fixed-width columns**: all quota segments (label, bar, value, pace, reset/limit) use the same char widths so glyphs align across lines
 - **Fetch time**: `fetchedAt` stored in `UsageData`, rendered as `⟳HH:MM` in the col-0 of line 3 (exact local time, not relative — stays accurate without per-second refresh)

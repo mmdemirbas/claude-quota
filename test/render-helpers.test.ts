@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { resetIn, formatMoney, bar } from '../src/render.js';
 import { visibleLength } from '../src/ansi.js';
 
+const DIM = '\x1b[2m';
+
 const now = Date.now();
 
 describe('resetIn', () => {
@@ -175,5 +177,38 @@ describe('bar (with projected)', () => {
     assert.equal(visibleLength(b), 10);
     const plain = b.replace(/\x1b\[[0-9;]*m/g, '');
     assert.equal(plain, '█'.repeat(5) + '░'.repeat(5));
+  });
+});
+
+describe('bar (with elapsed fraction — pace coloring)', () => {
+  // Over-pace: 70% used at 30% elapsed → normalFill=3, overFill=4
+  // Up-to-pace portion should be dim, over-pace portion should be bright
+  test('over-pace: up-to-pace █ are dim, over-pace █ are bright', () => {
+    const b = bar(70, 10, plainColor, 200, 0.3);
+    // idealPos = round(0.3 * 10) = 3
+    // filled = round(0.7 * 10) = 7
+    // normalFill (dim) = 3 chars, overFill (bright) = 4 chars
+    const parts = b.split(BLUE);
+    // First BLUE segment (after DIM prefix) should be the 3 dim █
+    // The bright segment (preceded by just BLUE, no DIM) should have 4 █
+    assert.ok(b.includes(`${DIM}${BLUE}${'█'.repeat(3)}`), 'up-to-pace portion should be dim');
+    assert.ok(b.includes(`${BLUE}${'█'.repeat(4)}`), 'over-pace portion should be bright');
+    assert.equal(visibleLength(b), 10);
+  });
+
+  // Under-pace: 20% used at 50% elapsed → no over-pace portion
+  test('under-pace: consumed █ use full color (no dim)', () => {
+    const b = bar(20, 10, plainColor, 40, 0.5);
+    // filled = round(0.2 * 10) = 2
+    // idealPos = round(0.5 * 10) = 5 → greenPart = 3
+    assert.ok(b.startsWith(`${BLUE}${'█'.repeat(2)}`), 'consumed portion should use full color');
+    assert.equal(visibleLength(b), 10);
+  });
+
+  test('over-pace bar has correct visible length', () => {
+    for (const [pct, elapsed] of [[80, 0.3], [50, 0.2], [90, 0.5]] as [number, number][]) {
+      const b = bar(pct, 10, plainColor, 200, elapsed);
+      assert.equal(visibleLength(b), 10, `pct=${pct} elapsed=${elapsed}`);
+    }
   });
 });
