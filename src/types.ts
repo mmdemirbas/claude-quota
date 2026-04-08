@@ -75,6 +75,8 @@ export interface ExtraUsageData {
 export interface ProfileApiResponse {
   organization?: {
     uuid?: string;
+    organization_type?: string;
+    rate_limit_tier?: string;
   };
 }
 
@@ -89,6 +91,10 @@ export interface CreditGrantApiResponse {
 /** File-based profile cache */
 export interface ProfileCacheFile {
   orgUUID: string;
+  /** Live rate_limit_tier from profile API (e.g. "default_claude_max_20x") */
+  rateLimitTier?: string;
+  /** Live organization_type from profile API (e.g. "claude_max") */
+  organizationType?: string;
   timestamp: number;
 }
 

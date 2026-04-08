@@ -224,19 +224,27 @@ function writeCacheFile(filePath: string, content: string): void {
 
 // ── Profile & credit grant caching ────────────────────────────────────────
 
-function readProfileCache(now: number): string | null {
+interface ProfileData {
+  orgUUID: string;
+  rateLimitTier?: string;
+  organizationType?: string;
+}
+
+function readProfileCache(now: number): ProfileData | null {
   try {
     const raw = fs.readFileSync(getProfileCachePath(), 'utf8');
     const cache: ProfileCacheFile = JSON.parse(raw);
     if (now - cache.timestamp < PROFILE_CACHE_TTL_MS && cache.orgUUID) {
-      return cache.orgUUID;
+      // Force re-fetch if cache was written before we started storing tier info
+      if (!cache.rateLimitTier) return null;
+      return { orgUUID: cache.orgUUID, rateLimitTier: cache.rateLimitTier, organizationType: cache.organizationType };
     }
     return null;
   } catch { return null; }
 }
 
-function writeProfileCache(orgUUID: string, timestamp: number): void {
-  const cache: ProfileCacheFile = { orgUUID, timestamp };
+function writeProfileCache(data: ProfileData, timestamp: number): void {
+  const cache: ProfileCacheFile = { orgUUID: data.orgUUID, rateLimitTier: data.rateLimitTier, organizationType: data.organizationType, timestamp };
   writeCacheFile(getProfileCachePath(), JSON.stringify(cache));
 }
 
@@ -307,17 +315,22 @@ export async function getCreditGrant(): Promise<number | null> {
   if (!creds) return null;
 
   // Get org UUID (from cache or profile API)
-  let orgUUID = readProfileCache(now);
-  if (!orgUUID) {
+  let profileData = readProfileCache(now);
+  if (!profileData) {
     const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
-    orgUUID = profile?.organization?.uuid ?? null;
-    if (!orgUUID) return null;
-    writeProfileCache(orgUUID, now);
+    const uuid = profile?.organization?.uuid;
+    if (!uuid) return null;
+    profileData = {
+      orgUUID: uuid,
+      rateLimitTier: profile?.organization?.rate_limit_tier,
+      organizationType: profile?.organization?.organization_type,
+    };
+    writeProfileCache(profileData, now);
   }
 
   // Fetch credit grant
   const grant = await fetchJson<CreditGrantApiResponse>(
-    `/api/oauth/organizations/${encodeURIComponent(orgUUID)}/overage_credit_grant`,
+    `/api/oauth/organizations/${encodeURIComponent(profileData.orgUUID)}/overage_credit_grant`,
     creds.accessToken,
   );
   if (!grant || !grant.granted || grant.amount_minor_units == null) {
@@ -336,10 +349,28 @@ export async function getCreditGrant(): Promise<number | null> {
 export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ data: UsageData | null; isStale: boolean }> {
   const now = Date.now();
 
+  // Derive plan name from profile cache (live API tier) → credentials (bootstrap fallback).
+  // Profile API's organization.rate_limit_tier is the authoritative source; credential
+  // rateLimitTier can be stale after plan upgrades until Claude Code refreshes the OAuth token.
+  const livePlanName = (): string | null => {
+    const profile = readProfileCache(now);
+    if (profile?.rateLimitTier || profile?.organizationType) {
+      const fromProfile = getPlanName(profile.organizationType ?? '', profile.rateLimitTier);
+      if (fromProfile) return fromProfile;
+    }
+    const creds = readCredentials(now);
+    return creds ? getPlanName(creds.subscriptionType, creds.rateLimitTier) : null;
+  };
+
   // Check cache first — serve cached data regardless of env settings
   if (!opts?.forceRefresh) {
     const cached = readCache(now);
-    if (cached) return cached;
+    if (cached) {
+      // Always re-derive planName so plan changes are reflected immediately.
+      const fresh = livePlanName();
+      if (fresh) cached.data = { ...cached.data, planName: fresh };
+      return cached;
+    }
   }
 
   const none = { data: null, isStale: false } as const;
@@ -356,7 +387,7 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
   const creds = readCredentials(now);
   if (!creds) return none;
 
-  const planName = getPlanName(creds.subscriptionType, creds.rateLimitTier);
+  const planName = livePlanName();
   if (!planName) return none; // API user
 
   // Bump cache timestamp to prevent parallel instances from also fetching
