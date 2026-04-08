@@ -383,7 +383,6 @@ export function formatMoney(amount: number): string {
   if (amount < 1)   return `$.${Math.round(amount * 100).toString().padStart(2, '0')}`;
   if (amount < 1000) return `$${Math.round(amount)}`;
   const k = Math.round(amount / 1000);
-  if (k >= 100) return `$${Math.round(amount / 1_000_000)}m`;
   return `$${k}k`;
 }
 
@@ -396,7 +395,7 @@ export function formatBalance(creditGrant: number, usedCredits: number): string 
   const balance = Math.max(0, creditGrant - usedCredits);
   if (balance === 0) return '$0';
   if (balance < 10) {
-    const rounded = Math.floor(balance * 100) / 100;
+    const rounded = Math.round(balance * 100) / 100;
     return `$${rounded.toFixed(2)}`;
   }
   if (balance < 100) {
