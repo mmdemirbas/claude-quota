@@ -202,11 +202,13 @@ function bumpCacheTimestamp(now: number): void {
     const raw = readJsCache(getCachePath());
     if (!raw) return;
     const cache: CacheFile = JSON.parse(raw);
-    if (!cache.data.apiUnavailable && !cache.rateLimitedCount) {
-      cache.timestamp = now;
-      cache.fetchStartedAt = now;
-      writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
-    }
+    // Skip bump for non-rate-limited failures (short TTL handles those).
+    // Always bump for rate-limited entries whose backoff has expired, otherwise
+    // parallel instances all see an expired backoff and race to fetch.
+    if (cache.data.apiUnavailable && !cache.rateLimitedCount) return;
+    cache.timestamp = now;
+    cache.fetchStartedAt = now;
+    writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
   } catch { /* no cache to bump */ }
 }
 
@@ -248,13 +250,13 @@ function writeProfileCache(data: ProfileData, timestamp: number): void {
   writeCacheFile(getProfileCachePath(), JSON.stringify(cache));
 }
 
-function readCreditGrantCache(now: number): number | null {
+function readCreditGrantCache(now: number): { hit: true; value: number | null } | null {
   try {
     const raw = readJsCache(getCreditGrantCachePath());
     if (!raw) return null;
     const cache: CreditGrantCacheFile = JSON.parse(raw);
     if (now - cache.timestamp < CREDIT_GRANT_CACHE_TTL_MS) {
-      return cache.creditGrant;
+      return { hit: true, value: cache.creditGrant };
     }
     return null;
   } catch { return null; }
@@ -306,9 +308,9 @@ function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | null> {
 export async function getCreditGrant(): Promise<number | null> {
   const now = Date.now();
 
-  // Check credit grant cache first
+  // Check credit grant cache first (wrapper distinguishes "no grant" from "cache miss")
   const cached = readCreditGrantCache(now);
-  if (cached !== null) return cached;
+  if (cached) return cached.value;
 
   // Need credentials for API calls
   const creds = readCredentials(now);
