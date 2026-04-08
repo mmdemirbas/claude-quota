@@ -13,7 +13,7 @@ const MAGENTA = '\x1b[35m';
 const CYAN = '\x1b[36m';
 const B_BLUE = '\x1b[94m';
 const B_MAG = '\x1b[95m';
-const GRAY = '\x1b[90m'; // bright black — for wasted quota in bars
+const BAR_WASTE = '\x1b[38;5;250m'; // slightly dimmer — wasted quota in bars
 
 const c = (color: string, text: string) => `${color}${text}${R}`;
 const dim = (text: string) => c(DIM, text);
@@ -98,7 +98,7 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
   const empty = width - filled;
 
   if (projectedPct === undefined) {
-    return `${colorFn(safe)}${'█'.repeat(filled)}${DIM}${'░'.repeat(empty)}${R}`;
+    return `${colorFn(safe)}${'█'.repeat(filled)}${colorFn(safe)}${'░'.repeat(empty)}${R}`;
   }
 
   const color = colorFn(safe);
@@ -111,7 +111,7 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     const projFilled = Math.min(width, Math.round((projectedPct / 100) * width));
     const projPath = Math.max(0, projFilled - filled);
     const wasted = empty - projPath;
-    return `${color}${'█'.repeat(filled)}${DIM}${'░'.repeat(projPath)}${GRAY}${'░'.repeat(wasted)}${R}`;
+    return `${color}${'█'.repeat(filled)}${color}${'░'.repeat(projPath)}${BAR_WASTE}${'░'.repeat(wasted)}${R}`;
   }
 
   const idealPos = Math.round(elapsedFraction * width);
@@ -119,17 +119,17 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
   const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
   const projPart = Math.max(0, projPos - filled);
   const grayPart = width - filled - projPart;
-  const projColor = projectedPct >= 100 ? RED : darken(color);
+  const projColor = projectedPct >= 100 ? RED : color;
 
   if (isOverPace) {
     // Over-pace: dim up to ideal, bright over-consumed, projected, wasted
     const normalFill = idealPos;
     const overFill = filled - normalFill;
-    return `${darken(color)}${'█'.repeat(normalFill)}${R}${color}${'█'.repeat(overFill)}${R}${projColor}${'░'.repeat(projPart)}${R}${GRAY}${'░'.repeat(grayPart)}${R}`;
+    return `${darken(color)}${'█'.repeat(normalFill)}${R}${color}${'█'.repeat(overFill)}${R}${projColor}${'░'.repeat(projPart)}${R}${BAR_WASTE}${'░'.repeat(grayPart)}${R}`;
   }
 
   // Under-pace: all filled is "up to pace" (dim), projected, wasted
-  return `${darken(color)}${'█'.repeat(filled)}${R}${projColor}${'░'.repeat(projPart)}${R}${GRAY}${'░'.repeat(grayPart)}${R}`;
+  return `${darken(color)}${'█'.repeat(filled)}${R}${projColor}${'░'.repeat(projPart)}${R}${BAR_WASTE}${'░'.repeat(grayPart)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
