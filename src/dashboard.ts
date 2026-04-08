@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 export function ensureDashboardHtml(): void {
   try {
     const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
+    mkdirSync(dir, { recursive: true });
     const htmlPath = join(dir, 'dashboard.html');
     writeFileSync(htmlPath, DASHBOARD_HTML, 'utf8');
   } catch { /* ignore */ }
@@ -378,7 +379,9 @@ function renderDashboard() {
 
   var extraUsage = null;
   if (raw.extraUsage && raw.extraUsage.enabled) {
-    var cg = (typeof CREDIT_GRANT !== 'undefined' && CREDIT_GRANT && CREDIT_GRANT.creditGrant) || raw.extraUsage.creditGrant || null;
+    var cg = (typeof CREDIT_GRANT !== 'undefined' && CREDIT_GRANT && CREDIT_GRANT.creditGrant != null)
+      ? CREDIT_GRANT.creditGrant
+      : (raw.extraUsage.creditGrant != null ? raw.extraUsage.creditGrant : null);
     extraUsage = { enabled: true, monthlyLimit: raw.extraUsage.monthlyLimit,
       usedCredits: raw.extraUsage.usedCredits, creditGrant: cg };
   }
@@ -411,7 +414,6 @@ function renderDashboard() {
 
   function fmtMoney(v) {
     if (v === 0) return '$0';
-    if (v < 1) return '$' + v.toFixed(2);
     if (v < 100) return '$' + v.toFixed(2);
     if (v < 1000) return '$' + Math.round(v);
     return '$' + Math.round(v / 1000) + 'k';
@@ -611,7 +613,7 @@ function renderDashboard() {
   if (d.extraUsage) {
     const e = d.extraUsage;
     const balance = e.creditGrant !== null ? Math.max(0, e.creditGrant - e.usedCredits) : null;
-    const balancePct = e.creditGrant ? Math.max(0, (balance / e.creditGrant) * 100) : 0;
+    const balancePct = (balance !== null && e.creditGrant) ? Math.max(0, (balance / e.creditGrant) * 100) : 0;
     const monthlyPct = e.monthlyLimit > 0 ? Math.min(100, (e.usedCredits / e.monthlyLimit) * 100) : 0;
 
     // Project months remaining
