@@ -336,11 +336,15 @@ describe('formatBalance', () => {
     assert.equal(formatBalance(100, 150), '$0');
   });
 
-  test('shows cents for amounts under $100', () => {
-    assert.equal(formatBalance(100, 5.42), '$94.58');
+  test('shows cents for balances under $10', () => {
+    assert.equal(formatBalance(10, 1.42), '$8.58');
   });
 
-  test('uses formatMoney for amounts >= $100', () => {
+  test('shows whole dollars for balances $10–$99', () => {
+    assert.equal(formatBalance(100, 5.42), '$95');
+  });
+
+  test('uses formatMoney for balances >= $100', () => {
     assert.equal(formatBalance(1000, 5), '$995');
   });
 

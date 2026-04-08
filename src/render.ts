@@ -130,8 +130,10 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
     return `${darken(color)}${'█'.repeat(normalFill)}${R}${color}${'█'.repeat(overFill)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
   }
 
-  // Under-pace: consumed, green headroom to ideal, blue projected above ideal, gray rest
-  const greenPart = Math.max(0, idealPos - filled);
+  // Under-pace: consumed, projected to ideal (or projected pos), gray wasted rest
+  // When projected < ideal, only the region up to projPos is "on track" green;
+  // the region from projPos to idealPos is wasted (gray).
+  const greenPart = Math.max(0, Math.min(projPos, idealPos) - filled);
   const bluePart = Math.max(0, projPos - idealPos);
   const grayPart = width - filled - greenPart - bluePart;
   return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
@@ -344,7 +346,7 @@ function renderQuota(
   // pace: 1(space) + 1(glyph) + 4(proj padded) = 6 chars, or 6 spaces
   let paceStr: string;
   if (pace) {
-    const projStr = `${pace.projected}%`.padStart(4);
+    const projStr = `${Math.min(pace.projected, 999)}%`.padStart(4);
     paceStr = ` ${pace.glyphColor}${pace.glyph}${R}${projectedColor(pace.projected)}${projStr}${R}`;
   } else {
     paceStr = '      '; // 6 spaces
@@ -380,7 +382,9 @@ export function formatMoney(amount: number): string {
   if (amount === 0) return '$0';
   if (amount < 1)   return `$.${Math.round(amount * 100).toString().padStart(2, '0')}`;
   if (amount < 1000) return `$${Math.round(amount)}`;
-  return `$${Math.round(amount / 1000)}k`;
+  const k = Math.round(amount / 1000);
+  if (k >= 100) return `$${Math.round(amount / 1_000_000)}m`;
+  return `$${k}k`;
 }
 
 /**
@@ -391,11 +395,12 @@ export function formatMoney(amount: number): string {
 export function formatBalance(creditGrant: number, usedCredits: number): string {
   const balance = Math.max(0, creditGrant - usedCredits);
   if (balance === 0) return '$0';
-  if (balance < 100) {
+  if (balance < 10) {
     const rounded = Math.floor(balance * 100) / 100;
-    // Show cents for small amounts, whole dollars otherwise
-    if (rounded < 10) return `$${rounded.toFixed(2)}`;
     return `$${rounded.toFixed(2)}`;
+  }
+  if (balance < 100) {
+    return `$${Math.round(balance)}`;
   }
   return formatMoney(balance);
 }
