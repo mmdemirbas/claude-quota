@@ -1,0 +1,1 @@
+- Add dashboard link to the status line if possible

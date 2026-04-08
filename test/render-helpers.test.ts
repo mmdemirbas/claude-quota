@@ -188,20 +188,32 @@ describe('bar (with elapsed fraction — pace coloring)', () => {
     // idealPos = round(0.3 * 10) = 3
     // filled = round(0.7 * 10) = 7
     // normalFill (dim) = 3 chars, overFill (bright) = 4 chars
-    const parts = b.split(BLUE);
-    // First BLUE segment (after DIM prefix) should be the 3 dim █
-    // The bright segment (preceded by just BLUE, no DIM) should have 4 █
     assert.ok(b.includes(`${DIM}${BLUE}${'█'.repeat(3)}`), 'up-to-pace portion should be dim');
     assert.ok(b.includes(`${BLUE}${'█'.repeat(4)}`), 'over-pace portion should be bright');
     assert.equal(visibleLength(b), 10);
   });
 
-  // Under-pace: 20% used at 50% elapsed → no over-pace portion
-  test('under-pace: consumed █ use full color (no dim)', () => {
+  // Under-pace: 20% used at 50% elapsed → all filled blocks are "up to pace" (dim)
+  test('under-pace: consumed █ are dim', () => {
     const b = bar(20, 10, plainColor, 40, 0.5);
-    // filled = round(0.2 * 10) = 2
-    // idealPos = round(0.5 * 10) = 5 → greenPart = 3
-    assert.ok(b.startsWith(`${BLUE}${'█'.repeat(2)}`), 'consumed portion should use full color');
+    // filled = round(0.2 * 10) = 2, idealPos = round(0.5 * 10) = 5, projPos = 4
+    assert.ok(b.startsWith(`${DIM}${BLUE}${'█'.repeat(2)}`), 'under-pace filled should be dim');
+    assert.equal(visibleLength(b), 10);
+  });
+
+  // Under-pace with projected ≥ 100%: projected portion should be red
+  test('under-pace: projected ≥ 100% shows red empty', () => {
+    const b = bar(20, 10, plainColor, 150, 0.1);
+    // filled = 2, projected capped at 100% → projPos = 10, projPart = 8, gray = 0
+    assert.ok(b.includes(RED + '░'.repeat(8)), 'projected ≥ 100% should be red');
+    assert.equal(visibleLength(b), 10);
+  });
+
+  // Over-pace with projected ≥ 100%: projected portion should be red
+  test('over-pace: projected ≥ 100% shows red empty', () => {
+    const b = bar(70, 10, plainColor, 200, 0.3);
+    // filled = 7, projPos = 10, projPart = 3, gray = 0
+    assert.ok(b.includes(RED + '░'.repeat(3)), 'over-pace projected ≥ 100% should be red');
     assert.equal(visibleLength(b), 10);
   });
 

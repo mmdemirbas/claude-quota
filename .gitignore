@@ -8,6 +8,7 @@ dist-test/
 .usage-cache.json
 .usage-cache.lock
 .keychain-backoff
+.playwright-mcp
 
 # IDE
 .idea/

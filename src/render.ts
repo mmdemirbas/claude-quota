@@ -84,13 +84,11 @@ function moneyValueColor(ratio: number): string {
 /**
  * Render a progress bar of `width` block characters.
  *
- * Four visual layers (left to right):
+ * Visual layers (left to right):
  *   1. Dim fill █ — consumed quota up to pace, darkened severity color
  *   2. Bright fill █ — over-consumed portion (ideal → current), full severity color
- *   3. Projected fill ░ — expected consumption (current → projected), dim
- *   4. Wasted/empty ░ — quota that won't be used, gray
- *
- * An ideal-pace marker ▕ is placed at the elapsed fraction position.
+ *   3. Projected ░ — expected future consumption, dim (or red when projected ≥ 100%)
+ *   4. Wasted ░ — quota that won't be used, gray
  *
  * Exported for testing.
  */
@@ -118,25 +116,20 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
 
   const idealPos = Math.round(elapsedFraction * width);
   const isOverPace = filled > idealPos;
-
   const projPos = Math.min(width, Math.round((Math.min(projectedPct, 100) / 100) * width));
+  const projPart = Math.max(0, projPos - filled);
+  const grayPart = width - filled - projPart;
+  const projColor = projectedPct >= 100 ? RED : darken(color);
 
   if (isOverPace) {
-    // Over-pace: dim up to ideal, bright over-consumed, dim projected, gray rest
+    // Over-pace: dim up to ideal, bright over-consumed, projected, wasted
     const normalFill = idealPos;
     const overFill = filled - normalFill;
-    const bluePart = Math.max(0, projPos - filled);
-    const grayPart = width - filled - bluePart;
-    return `${darken(color)}${'█'.repeat(normalFill)}${R}${color}${'█'.repeat(overFill)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
+    return `${darken(color)}${'█'.repeat(normalFill)}${R}${color}${'█'.repeat(overFill)}${R}${projColor}${'░'.repeat(projPart)}${R}${GRAY}${'░'.repeat(grayPart)}${R}`;
   }
 
-  // Under-pace: consumed, projected to ideal (or projected pos), gray wasted rest
-  // When projected < ideal, only the region up to projPos is "on track" green;
-  // the region from projPos to idealPos is wasted (gray).
-  const greenPart = Math.max(0, Math.min(projPos, idealPos) - filled);
-  const bluePart = Math.max(0, projPos - idealPos);
-  const grayPart = width - filled - greenPart - bluePart;
-  return `${color}${'█'.repeat(filled)}${GREEN}${'░'.repeat(greenPart)}${darken(color)}${'░'.repeat(bluePart)}${GRAY}${'░'.repeat(grayPart)}${R}`;
+  // Under-pace: all filled is "up to pace" (dim), projected, wasted
+  return `${darken(color)}${'█'.repeat(filled)}${R}${projColor}${'░'.repeat(projPart)}${R}${GRAY}${'░'.repeat(grayPart)}${R}`;
 }
 
 // ── Time formatting ────────────────────────────────────────────────────────
