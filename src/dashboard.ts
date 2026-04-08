@@ -438,7 +438,7 @@ function renderDashboard() {
     if (remaining <= 0 || remaining >= windowMs) return null;
     const elapsed = (windowMs - remaining) / windowMs;
     if (elapsed < 0.02) return null;
-    const projected = Math.round(pct / elapsed);
+    const projected = Math.min(Math.round(pct / elapsed), 999);
     const paceRatio = pct / (elapsed * 100);
     let glyph, color;
     if (paceRatio < 0.85) { glyph = '↘'; color = 'var(--green)'; }
