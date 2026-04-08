@@ -1,7 +1,7 @@
 {
   "name": "claude-quota",
   "description": "Compact quota-focused statusline for Claude Code — session, weekly, sonnet, and extra usage at a glance",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "author": {
     "name": "Muhammed",
     "url": "https://github.com/mdemirbas"
