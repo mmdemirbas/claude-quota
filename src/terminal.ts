@@ -32,6 +32,16 @@ export function terminalDims(stdin: StdinData | null): TerminalDims {
   return { columns, rows: Math.min(rows, 3) };
 }
 
+/**
+ * Upper bound on accepted terminal dimensions. Any real TTY tops out a
+ * couple orders of magnitude below this; larger values reaching the
+ * renderer only ever come from a hostile env (e.g. COLUMNS=999999999),
+ * where they'd push string allocation in render.ts into the megabytes.
+ */
+const MAX_DIM = 10_000;
+
 function validDim(n: unknown): number | null {
-  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= MAX_DIM
+    ? Math.floor(n)
+    : null;
 }

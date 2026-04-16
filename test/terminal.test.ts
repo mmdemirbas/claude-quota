@@ -43,4 +43,31 @@ describe('terminalDims', () => {
     assert.equal(dims.columns, 99);
     assert.equal(dims.rows, 2);
   });
+
+  // Hostile COLUMNS/LINES injection: a caller (or a malicious shell env)
+  // can hand us MAX_SAFE_INTEGER, which the renderer would then try to
+  // allocate a string for. MAX_DIM caps the accepted range; larger values
+  // fall through to the next source (stderr TTY, env var, default).
+  test('ignores absurdly large column values from stdin', () => {
+    const dims = terminalDims({ columns: 999_999_999 });
+    assert.ok(dims.columns < 100_000,
+      'columns must fall back to a sane value for 999_999_999');
+  });
+
+  test('ignores Number.MAX_SAFE_INTEGER from stdin', () => {
+    const dims = terminalDims({ columns: Number.MAX_SAFE_INTEGER, rows: Number.MAX_SAFE_INTEGER });
+    assert.ok(dims.columns < 100_000);
+    assert.ok(dims.rows <= 3);
+  });
+
+  test('accepts values up to the cap', () => {
+    const dims = terminalDims({ columns: 10_000 });
+    assert.equal(dims.columns, 10_000);
+  });
+
+  test('rejects values just above the cap', () => {
+    const dims = terminalDims({ columns: 10_001 });
+    assert.ok(dims.columns < 10_001,
+      'columns > 10000 from stdin must not be trusted');
+  });
 });
