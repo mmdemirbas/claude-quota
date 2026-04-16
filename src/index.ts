@@ -5,20 +5,27 @@ import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
 import { ensureDashboardHtml } from './dashboard.js';
+import { writeFileSecure } from './secure-fs.js';
 import { fileURLToPath } from 'node:url';
-import { realpathSync, writeFileSync, mkdirSync } from 'node:fs';
+import { realpathSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 
 const DEBUG = process.env.CLAUDE_QUOTA_DEBUG === '1';
 
+/**
+ * Persist a debug snapshot under the plugin dir. Contents can include
+ * stdin context (cwd, transcript_path) which is not a secret but leaks
+ * user activity if another local user can read the file. Goes through
+ * writeFileSecure so the dump lands with mode 0o600.
+ */
 function debugDump(filename: string, data: unknown): void {
   if (!DEBUG) return;
   try {
     const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, filename), JSON.stringify(data, null, 2), 'utf8');
+    writeFileSecure(join(dir, filename), JSON.stringify(data, null, 2));
   } catch { /* ignore */ }
 }
 

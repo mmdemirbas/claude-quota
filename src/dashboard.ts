@@ -1,14 +1,21 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { writeFileSecure } from './secure-fs.js';
 
-/** Write dashboard.html to the plugin dir (always overwrite to keep in sync with code). */
+/**
+ * Write dashboard.html to the plugin dir (always overwrite to keep the
+ * shipped markup in sync with code). Routed through writeFileSecure so
+ * the file lands with mode 0o600. This matters because the dashboard
+ * JS is reloaded from disk on every poll — a world-writable file is a
+ * second-user-to-first-user code execution path if an attacker can
+ * replace the HTML between renders.
+ */
 export function ensureDashboardHtml(): void {
   try {
     const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
     mkdirSync(dir, { recursive: true });
-    const htmlPath = join(dir, 'dashboard.html');
-    writeFileSync(htmlPath, DASHBOARD_HTML, 'utf8');
+    writeFileSecure(join(dir, 'dashboard.html'), DASHBOARD_HTML);
   } catch { /* ignore */ }
 }
 
