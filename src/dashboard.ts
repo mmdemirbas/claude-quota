@@ -1,7 +1,6 @@
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { writeFileSecure } from './secure-fs.js';
+import { pluginDir, dashboardHtmlPath } from './paths.js';
 
 /**
  * Write dashboard.html to the plugin dir (always overwrite to keep the
@@ -13,9 +12,8 @@ import { writeFileSecure } from './secure-fs.js';
  */
 export function ensureDashboardHtml(): void {
   try {
-    const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
-    mkdirSync(dir, { recursive: true });
-    writeFileSecure(join(dir, 'dashboard.html'), DASHBOARD_HTML);
+    mkdirSync(pluginDir(), { recursive: true });
+    writeFileSecure(dashboardHtmlPath(), DASHBOARD_HTML);
   } catch { /* ignore */ }
 }
 

@@ -1,6 +1,7 @@
 import type { StdinData, UsageData, GitStatus } from './types.js';
 import { getModelName, getContextPercent, getProjectName, getEffortLevel } from './stdin.js';
-import { visibleLength, truncate } from './ansi.js';
+import { visibleLength, truncate, hyperlink } from './ansi.js';
+import { dashboardFileUrl } from './paths.js';
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 
@@ -289,6 +290,20 @@ function fitLine(
 // ── Segment rendering ──────────────────────────────────────────────────────
 
 /**
+ * Clickable dashboard link. Renders as a single glyph wrapped in an
+ * OSC 8 hyperlink that opens ~/.claude/plugins/claude-quota/dashboard.html.
+ * Terminals without OSC 8 support strip the frame and just show the glyph.
+ *
+ * Only rendered at the `full` tier. On narrower terminals the
+ * informational segments (project, branch) win the budget — the link
+ * is decorative and drops out first.
+ */
+function renderDashLink(detail: DetailLevel): string | null {
+  if (detail !== 'full') return null;
+  return c(CYAN, hyperlink('⧉', dashboardFileUrl()));
+}
+
+/**
  * Render the git portion of line 1.
  * Returns null when project is absent or detail is 'compact'.
  */
@@ -521,7 +536,8 @@ export function render(input: RenderInput): void {
       cols,
     );
   } else {
-    // Multi-row mode: model + ctx bar + project/git (git degrades via detail tiers).
+    // Multi-row mode: model + ctx bar + project/git + dashboard link.
+    // Both git and link degrade via detail tiers.
     const ctxBar = bar(ctxPct, 10, ctxColor);
     const ctxSegment = `${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
     line1 = fitLine(
@@ -529,6 +545,7 @@ export function render(input: RenderInput): void {
         pad0(modelText, CYAN),
         ctxSegment,
         renderGit(project, git, detail),
+        renderDashLink(detail),
       ],
       cols,
     );

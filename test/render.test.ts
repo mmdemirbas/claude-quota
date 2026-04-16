@@ -3,12 +3,20 @@ import assert from 'node:assert/strict';
 import { render, modelDisplay, calcPace, formatBalance } from '../src/render.js';
 import type { RenderInput } from '../src/render.js';
 import type { UsageData } from '../src/types.js';
+import { visibleLength } from '../src/ansi.js';
 
-/** Visible character count (strip ANSI, then measure length). */
-const vlen = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '').length;
+/** Visible character count (strip ANSI SGR + OSC 8 frames, then measure length). */
+const vlen = (s: string) => visibleLength(s);
 
-/** Strip ANSI escape codes for plain-text assertions. */
-const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, '');
+/**
+ * Strip all supported ANSI escape sequences (SGR colours + OSC 8
+ * hyperlinks) for plain-text assertions. OSC 8 frames are removed
+ * wholesale, leaving only the clickable text visible to substring
+ * checks like line.includes('main').
+ */
+const strip = (s: string) =>
+  s.replace(/\x1b\[[0-9;]*m/g, '')
+   .replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
 
 function capture(input: Omit<RenderInput, 'now'> & { now?: number }): { line1: string; line2: string; line3: string; full: string } {
   const lines: string[] = [];
@@ -543,6 +551,52 @@ describe('width-adaptive rendering', () => {
     const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 45 });
     assert.ok(!line1.includes('my-project'), 'project should be dropped below no-pace-tier width');
     assert.ok(line1.includes('sonnet'), 'model name must remain');
+  });
+
+  // ── dashboard link segment ───────────────────────────────────────────────
+
+  test('line 1 shows the dashboard OSC 8 link at a wide terminal', () => {
+    // Wide terminal → full tier → link segment included.
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 120 });
+    console.log = orig;
+
+    const rawLine1 = lines[0] ?? '';
+    assert.ok(rawLine1.includes('\x1b]8;;file://'),
+      'OSC 8 hyperlink opener should appear on line 1 at 120 cols');
+    assert.ok(rawLine1.includes('dashboard.html'),
+      'link target should be dashboard.html');
+    assert.ok(rawLine1.includes('\x1b]8;;\x1b\\'),
+      'OSC 8 link closer must be present');
+  });
+
+  test('line 1 drops the dashboard link below full tier', () => {
+    // 57 cols = no-reset tier — link decoration dropped, branch kept.
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 57 });
+    console.log = orig;
+
+    const rawLine1 = lines[0] ?? '';
+    assert.ok(!rawLine1.includes('\x1b]8;;'),
+      'link must drop before the branch does when width is tight');
+    assert.ok(strip(rawLine1).includes('main'),
+      'branch should still render at no-reset tier width');
+  });
+
+  test('line 1 visible length still respects column width with link present', () => {
+    // Regression: forgetting to strip OSC 8 in visibleLength would blow
+    // past the width cap without fitLine noticing.
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 120 });
+    console.log = orig;
+    const v = vlen(lines[0] ?? '');
+    assert.ok(v <= 120, `line 1 visible length ${v} must not exceed 120`);
   });
 
   // ── line length invariant ───────────────────────────────────────────────

@@ -10,7 +10,7 @@ more visiting the usage page.
 ![light.png](docs/light.png)
 
 ```
-sonnet high │ ctx:██░░░░░░░░  23% │ lakelab git:(main*)
+sonnet high │ ctx:██░░░░░░░░  23% │ lakelab git:(main*) │ ⧉
 max 5x      │  5h:██░░░░░░░░  17% ↗139% ◔3h56m │  7d:██░░░░░░░░  23% ↘  76% ◔4d20h
 ⟳18:01      │ snt:██████░░░░  63% → 91% ◕2d3h  │  ●$:░░░░░░░░░░   $0 ↘  $0 /$5
 ```
@@ -25,6 +25,7 @@ max 5x      │  5h:██░░░░░░░░  17% ↗139% ◔3h56m │  7d
 | `ctx:██░░░░░░░░  23%` | Context window: 10-char bar + right-justified % |
 | `lakelab`             | Project directory (last path segment)           |
 | `git:(main*)`         | Git branch, `*` = dirty working tree            |
+| `⧉`                   | Clickable link to the full dashboard (OSC 8 hyperlink); opens `~/.claude/plugins/claude-quota/dashboard.html`. Rendered only when the terminal is wide enough for the full tier |
 
 **Quota segments** (lines 2 & 3 at rows ≥ 3; merged onto one line at rows = 2)
 
@@ -158,6 +159,30 @@ backoff (60 s → 5 min). The `⟳` clears once a fresh fetch succeeds.
 was written before the permission hardening shipped. The plugin refuses to read files with group
 or world permission bits and re-fetches; the warning clears after the next successful fetch writes
 a fresh `0600` cache. Set `CLAUDE_QUOTA_SILENT=1` to suppress the line if you prefer.
+
+## Dashboard
+
+The plugin also writes a full HTML dashboard to:
+
+```
+~/.claude/plugins/claude-quota/dashboard.html
+```
+
+The file is regenerated on every statusline render, so its numbers stay in sync with the statusline
+automatically. The page itself polls its local `data.js` every 5 seconds and redraws — leave it open
+in a browser tab for a live view.
+
+Ways to open it:
+
+- **Click the `⧉` glyph on line 1.** In OSC 8-capable terminals (iTerm2, kitty, Ghostty, WezTerm,
+  VS Code terminal, recent Windows Terminal, recent GNOME Terminal), the glyph is a clickable
+  hyperlink that opens the dashboard in your default browser. Terminals without OSC 8 support
+  strip the escape bytes and show just the glyph — the URL is never leaked into visible output.
+- **Open directly**: `open ~/.claude/plugins/claude-quota/dashboard.html` (macOS) or paste
+  `file:///Users/you/.claude/plugins/claude-quota/dashboard.html` into a browser.
+
+The `⧉` glyph only appears when the terminal is wide enough for the full line-1 tier; narrower
+terminals drop it first so that the project and branch segments keep their space.
 
 ## Security model
 
