@@ -89,4 +89,49 @@ describe('parseExtraUsage', () => {
     assert.equal(result?.monthlyLimit, 5);
     assert.equal(result?.creditGrant, null);
   });
+
+  // Hardening: non-numeric or negative monetary fields must not leak
+  // NaN/negative values into the renderer. They'd produce "NaN%" bars or
+  // a negative spend.
+  test('returns null when monthly_limit is non-numeric', () => {
+    const result = parseExtraUsage({
+      is_enabled: true,
+      monthly_limit: 'lots' as unknown as number,
+    });
+    assert.equal(result, null);
+  });
+
+  test('returns null when monthly_limit is negative', () => {
+    const result = parseExtraUsage({
+      is_enabled: true,
+      monthly_limit: -500,
+    });
+    assert.equal(result, null);
+  });
+
+  test('returns null when monthly_limit is Infinity or NaN', () => {
+    assert.equal(parseExtraUsage({ is_enabled: true, monthly_limit: Infinity }), null);
+    assert.equal(parseExtraUsage({ is_enabled: true, monthly_limit: NaN }), null);
+  });
+
+  test('falls back to 0 used_credits for non-numeric values rather than returning null', () => {
+    const result = parseExtraUsage({
+      is_enabled: true,
+      monthly_limit: 500,
+      used_credits: 'bad' as unknown as number,
+    });
+    assert.ok(result);
+    assert.equal(result.usedCredits, 0);
+    assert.equal(result.monthlyLimit, 5);
+  });
+
+  test('falls back to 0 used_credits for negative values', () => {
+    const result = parseExtraUsage({
+      is_enabled: true,
+      monthly_limit: 500,
+      used_credits: -100,
+    });
+    assert.ok(result);
+    assert.equal(result.usedCredits, 0);
+  });
 });

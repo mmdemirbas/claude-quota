@@ -1,6 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { getModelName, getContextPercent, getProjectName, getEffortLevel } from '../src/stdin.js';
+import {
+  getModelName, getContextPercent, getProjectName, getEffortLevel,
+  parseStdinPayload, STDIN_MAX_BYTES,
+} from '../src/stdin.js';
 import type { StdinData } from '../src/types.js';
 
 describe('getModelName', () => {
@@ -78,6 +81,56 @@ describe('getContextPercent', () => {
     // 1/3 = 33.33... → rounds to 33
     assert.equal(getContextPercent(stdin), 33);
   });
+
+  // Hardening: hostile/buggy stdin must not produce negative or NaN
+  // percentages that leak into the render layer.
+  test('clamps negative token counts to 0', () => {
+    const stdin = {
+      context_window: {
+        current_usage: { input_tokens: -1_000_000 as unknown as number },
+        context_window_size: 200_000,
+      },
+    } as StdinData;
+    assert.equal(getContextPercent(stdin), 0);
+  });
+
+  test('ignores non-numeric token fields rather than producing NaN', () => {
+    const stdin = {
+      context_window: {
+        current_usage: { input_tokens: 'lots' as unknown as number },
+        context_window_size: 200_000,
+      },
+    } as StdinData;
+    assert.equal(getContextPercent(stdin), 0);
+  });
+
+  test('returns 0 for non-finite context_window_size', () => {
+    const stdinInf = {
+      context_window: {
+        current_usage: { input_tokens: 1_000 },
+        context_window_size: Infinity as unknown as number,
+      },
+    } as StdinData;
+    assert.equal(getContextPercent(stdinInf), 0);
+
+    const stdinNaN = {
+      context_window: {
+        current_usage: { input_tokens: 1_000 },
+        context_window_size: NaN as unknown as number,
+      },
+    } as StdinData;
+    assert.equal(getContextPercent(stdinNaN), 0);
+  });
+
+  test('returns 0 for negative context_window_size', () => {
+    const stdin = {
+      context_window: {
+        current_usage: { input_tokens: 1_000 },
+        context_window_size: -1 as unknown as number,
+      },
+    } as StdinData;
+    assert.equal(getContextPercent(stdin), 0);
+  });
 });
 
 describe('getProjectName', () => {
@@ -102,6 +155,55 @@ describe('getProjectName', () => {
   test('handles root path gracefully', () => {
     const stdin: StdinData = { cwd: '/' };
     assert.equal(getProjectName(stdin), null);
+  });
+});
+
+describe('parseStdinPayload', () => {
+  test('parses a valid payload', () => {
+    const parsed = parseStdinPayload('{"model":{"display_name":"Sonnet 4.6"}}');
+    assert.ok(parsed);
+    assert.equal(parsed.model?.display_name, 'Sonnet 4.6');
+  });
+
+  test('tolerates surrounding whitespace', () => {
+    const parsed = parseStdinPayload('  \n {"cwd":"/tmp"}  \n');
+    assert.equal(parsed?.cwd, '/tmp');
+  });
+
+  test('returns null for malformed JSON', () => {
+    assert.equal(parseStdinPayload('{not json'), null);
+    assert.equal(parseStdinPayload(''), null);
+    assert.equal(parseStdinPayload('undefined'), null);
+  });
+
+  test('rejects JSON arrays (must be an object)', () => {
+    assert.equal(parseStdinPayload('[]'), null);
+    assert.equal(parseStdinPayload('[1,2,3]'), null);
+  });
+
+  test('rejects JSON primitives', () => {
+    assert.equal(parseStdinPayload('42'), null);
+    assert.equal(parseStdinPayload('"hello"'), null);
+    assert.equal(parseStdinPayload('true'), null);
+    assert.equal(parseStdinPayload('null'), null);
+  });
+
+  test('rejects payloads larger than STDIN_MAX_BYTES without parsing', () => {
+    // Build a valid-JSON oversized payload. Even though JSON.parse would
+    // succeed, the size guard must reject first to bound memory usage.
+    const oversized = '{"cwd":"' + 'x'.repeat(STDIN_MAX_BYTES) + '"}';
+    assert.ok(oversized.length > STDIN_MAX_BYTES);
+    assert.equal(parseStdinPayload(oversized), null);
+  });
+
+  test('accepts payloads at exactly the size cap', () => {
+    // Construct a payload equal to or just under the cap — must succeed.
+    const filler = 'x'.repeat(STDIN_MAX_BYTES - 20);
+    const payload = `{"cwd":"${filler}"}`;
+    assert.ok(payload.length <= STDIN_MAX_BYTES);
+    const parsed = parseStdinPayload(payload);
+    assert.ok(parsed);
+    assert.equal(parsed.cwd?.length, filler.length);
   });
 });
 

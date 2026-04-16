@@ -1,24 +1,83 @@
 import type { StdinData } from './types.js';
 
-/** Read and parse JSON from stdin (Claude Code pipes context data) */
+/** Upper bound on stdin payload size. Claude Code's JSON fits easily in a
+ * few KB; anything beyond ~1 MB is either a bug or an attempt to push the
+ * plugin into an OOM during render. Bytes past this cap are dropped and
+ * the final payload is rejected as malformed. Exported for testing. */
+export const STDIN_MAX_BYTES = 1_048_576;
+const STDIN_TIMEOUT_MS = 2000;
+
+/**
+ * Parse a completed stdin payload. Exposed so the size-cap and JSON
+ * validation can be tested without spinning up a child process.
+ */
+export function parseStdinPayload(raw: string): StdinData | null {
+  if (raw.length > STDIN_MAX_BYTES) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw.trim());
+    return isStdinShape(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read and parse JSON from stdin (Claude Code pipes context data). */
 export async function readStdin(): Promise<StdinData | null> {
   if (process.stdin.isTTY) return null;
 
   return new Promise((resolve) => {
-    let data = '';
+    const chunks: string[] = [];
+    let size = 0;
+    let overflowed = false;
+    let settled = false;
+
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk: string) => { data += chunk; });
-    // Timeout after 2s; cleared on normal end to avoid holding the event loop
-    const timer = setTimeout(() => resolve(null), 2000);
-    process.stdin.on('end', () => {
+
+    const finish = (value: StdinData | null): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      try {
-        resolve(JSON.parse(data.trim()) as StdinData);
-      } catch {
-        resolve(null);
+      // Detach listeners so a late 'data' event cannot land after resolve.
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', onEnd);
+      process.stdin.removeListener('error', onError);
+      resolve(value);
+    };
+
+    const onData = (chunk: string): void => {
+      if (overflowed) return;
+      size += chunk.length;
+      if (size > STDIN_MAX_BYTES) {
+        overflowed = true;
+        // Drop the payload — an oversized body is either a bug or hostile.
+        chunks.length = 0;
+        return;
       }
-    });
+      chunks.push(chunk);
+    };
+
+    const onEnd = (): void => {
+      if (overflowed) { finish(null); return; }
+      finish(parseStdinPayload(chunks.join('')));
+    };
+
+    const onError = (): void => finish(null);
+
+    const timer = setTimeout(() => finish(null), STDIN_TIMEOUT_MS);
+
+    process.stdin.on('data', onData);
+    process.stdin.on('end', onEnd);
+    process.stdin.on('error', onError);
   });
+}
+
+/**
+ * Minimal shape guard for the stdin payload. Keeps JSON.parse results as
+ * `unknown` until we've at least confirmed we got an object — the
+ * per-field getters below already tolerate missing keys.
+ */
+function isStdinShape(x: unknown): x is StdinData {
+  return typeof x === 'object' && x !== null && !Array.isArray(x);
 }
 
 export function getModelName(stdin: StdinData): string {
@@ -28,15 +87,23 @@ export function getModelName(stdin: StdinData): string {
 export function getContextPercent(stdin: StdinData): number {
   const usage = stdin.context_window?.current_usage;
   const size = stdin.context_window?.context_window_size;
-  if (!usage || !size || size === 0) return 0;
+  if (!usage || !size || !Number.isFinite(size) || size <= 0) return 0;
 
   const total =
-    (usage.input_tokens ?? 0) +
-    (usage.cache_creation_input_tokens ?? 0) +
-    (usage.cache_read_input_tokens ?? 0) +
-    (usage.output_tokens ?? 0);
+    safeNum(usage.input_tokens) +
+    safeNum(usage.cache_creation_input_tokens) +
+    safeNum(usage.cache_read_input_tokens) +
+    safeNum(usage.output_tokens);
 
-  return Math.min(100, Math.round((total / size) * 100));
+  const pct = Math.round((total / size) * 100);
+  // Clamp both sides: negative inputs from hostile/buggy stdin would otherwise
+  // render as a negative percentage in the bar.
+  return Math.max(0, Math.min(100, pct));
+}
+
+/** Coerce an arbitrary token count to a non-negative finite number. */
+function safeNum(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
 }
 
 /** Reads effort level from whichever field name Claude Code uses in the current version. */

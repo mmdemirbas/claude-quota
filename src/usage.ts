@@ -215,16 +215,31 @@ export function parseDate(s: string | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+/** Coerce an API monetary field to a non-negative finite dollar amount, or null when unparseable. */
+function parseMinorUnits(v: unknown): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null;
+  return v / 100;
+}
+
 /** Exported for testing. */
 export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsageData | null {
   if (raw == null) return null; // API didn't return extra_usage at all
   if (!raw.is_enabled) return { enabled: false, monthlyLimit: 0, usedCredits: 0, creditGrant: null };
-  if (!raw.monthly_limit) return null; // enabled but no limit — avoid $0/$0 display
-  // API returns values in cents; convert to dollars for display
+
+  // API returns values in cents; convert to dollars. A non-numeric field
+  // (e.g. schema drift or MITM-injected garbage) must not produce NaN
+  // percentages in the renderer — treat "enabled but unparseable" as if
+  // the quota were absent.
+  const monthlyLimit = parseMinorUnits(raw.monthly_limit);
+  if (monthlyLimit == null || monthlyLimit === 0) return null;
+
+  const usedRaw = raw.used_credits ?? 0;
+  const usedCredits = parseMinorUnits(usedRaw) ?? 0;
+
   return {
     enabled: true,
-    monthlyLimit: raw.monthly_limit / 100,
-    usedCredits: (raw.used_credits ?? 0) / 100,
+    monthlyLimit,
+    usedCredits,
     creditGrant: null, // filled later by getCreditGrant()
   };
 }
