@@ -7,6 +7,8 @@ import type {
   ProfileApiResponse, CreditGrantApiResponse, ProfileCacheFile, CreditGrantCacheFile,
 } from './types.js';
 import { readCredentials, getPlanName } from './credentials.js';
+import { readFileSecure, writeFileSecure } from './secure-fs.js';
+import { warn } from './log.js';
 
 const CACHE_TTL_MS = 2 * 60_000;           // 2 min hard TTL (force re-fetch)
 const CACHE_SOFT_TTL_MS = 45_000;          // 45s soft TTL (serve stale + background refresh)
@@ -34,15 +36,23 @@ function getCreditGrantCachePath(): string {
   return path.join(getPluginDir(), 'credit-grant.js');
 }
 
-/** Read JSON from a .js file that wraps it as `var NAME=<json>;` */
+/**
+ * Read JSON from a .js file that wraps it as `var NAME=<json>;`.
+ *
+ * Goes through readFileSecure so a world-writable or non-owned cache
+ * file (e.g., planted by another local user) is refused — we will treat
+ * the cache as missing and re-fetch rather than serve attacker data
+ * into render/dashboard code paths.
+ */
 function readJsCache(filePath: string): string | null {
-  try {
-    const content = fs.readFileSync(filePath, 'utf8');
-    const eqIdx = content.indexOf('=');
-    if (eqIdx < 0) return null;
-    // Strip "var NAME=" prefix and trailing ";"
-    return content.slice(eqIdx + 1).replace(/;\s*$/, '');
-  } catch { return null; }
+  const content = readFileSecure(filePath, (reason) => {
+    warn('cache file rejected', { path: filePath, reason });
+  });
+  if (content == null) return null;
+  const eqIdx = content.indexOf('=');
+  if (eqIdx < 0) return null;
+  // Strip "var NAME=" prefix and trailing ";"
+  return content.slice(eqIdx + 1).replace(/;\s*$/, '');
 }
 
 /** Write JSON to a .js file as `var NAME=<json>;` */
@@ -212,16 +222,12 @@ function bumpCacheTimestamp(now: number): void {
   } catch { /* no cache to bump */ }
 }
 
-/** Symlink-safe cache file writer. */
+/** Cache file writer: plugin dir is created if missing, output is atomic and 0o600. */
 function writeCacheFile(filePath: string, content: string): void {
   try {
-    const dir = getPluginDir();
-    fs.mkdirSync(dir, { recursive: true });
-    try {
-      if (fs.lstatSync(filePath).isSymbolicLink()) return;
-    } catch { /* file does not exist yet — fine to create */ }
-    fs.writeFileSync(filePath, content, 'utf8');
+    fs.mkdirSync(getPluginDir(), { recursive: true });
   } catch { /* ignore */ }
+  writeFileSecure(filePath, content);
 }
 
 // ── Profile & credit grant caching ────────────────────────────────────────
@@ -233,8 +239,11 @@ interface ProfileData {
 }
 
 function readProfileCache(now: number): ProfileData | null {
+  const raw = readFileSecure(getProfileCachePath(), (reason) => {
+    warn('profile cache rejected', { reason });
+  });
+  if (raw == null) return null;
   try {
-    const raw = fs.readFileSync(getProfileCachePath(), 'utf8');
     const cache: ProfileCacheFile = JSON.parse(raw);
     if (now - cache.timestamp < PROFILE_CACHE_TTL_MS && cache.orgUUID) {
       // Force re-fetch if cache was written before we started storing tier info

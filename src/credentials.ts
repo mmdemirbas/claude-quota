@@ -1,8 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createHash } from 'node:crypto';
+import { readFileSecure } from './secure-fs.js';
+import { warn } from './log.js';
 
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const KEYCHAIN_TIMEOUT_MS = 3000;
@@ -104,11 +105,18 @@ function readFromKeychain(now: number): Credentials | null {
   return null;
 }
 
-function readFromFile(now: number): Credentials | null {
+/** Exported for testing. Reads `.credentials.json` under getConfigDir(). */
+export function readFromFile(now: number): Credentials | null {
   const credPath = path.join(getConfigDir(), '.credentials.json');
+  // Refuse to read if perms/ownership would let another local user swap or
+  // read the file. A compromised .credentials.json exposes a usable OAuth
+  // bearer token — we'd rather fail auth than consume a planted file.
+  const raw = readFileSecure(credPath, (reason) => {
+    warn('credentials file rejected', { reason });
+  });
+  if (raw == null) return null;
   try {
-    if (!fs.existsSync(credPath)) return null;
-    const data: CredentialsFile = JSON.parse(fs.readFileSync(credPath, 'utf8'));
+    const data: CredentialsFile = JSON.parse(raw);
     return parseCredentials(data, now);
   } catch {
     return null;

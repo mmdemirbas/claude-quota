@@ -1,6 +1,9 @@
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPlanName, parseCredentials, type CredentialsFile } from '../src/credentials.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { getPlanName, parseCredentials, readFromFile, type CredentialsFile } from '../src/credentials.js';
 
 const NOW = 1_700_000_000_000; // fixed reference timestamp (ms)
 
@@ -60,6 +63,78 @@ describe('parseCredentials', () => {
       claudeAiOauth: { accessToken: '\r\n', subscriptionType: 'claude_max_20' },
     };
     assert.equal(parseCredentials(data, NOW), null);
+  });
+});
+
+// readFromFile bypasses Keychain, so we can exercise the permission
+// guard deterministically without interference from the host's macOS
+// Keychain entries. POSIX-only.
+const isPosix = process.platform !== 'win32';
+describe('readFromFile permission guard', { skip: !isPosix }, () => {
+  let tmpDir: string;
+  let prevCfg: string | undefined;
+  let prevSilent: string | undefined;
+
+  before(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-quota-creds-'));
+    prevCfg = process.env['CLAUDE_CONFIG_DIR'];
+    prevSilent = process.env['CLAUDE_QUOTA_SILENT'];
+    process.env['CLAUDE_CONFIG_DIR'] = tmpDir;
+    process.env['CLAUDE_QUOTA_SILENT'] = '1';
+  });
+
+  after(() => {
+    if (prevCfg === undefined) delete process.env['CLAUDE_CONFIG_DIR'];
+    else process.env['CLAUDE_CONFIG_DIR'] = prevCfg;
+    if (prevSilent === undefined) delete process.env['CLAUDE_QUOTA_SILENT'];
+    else process.env['CLAUDE_QUOTA_SILENT'] = prevSilent;
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  function writeCreds(mode: number, expiresAt: number): void {
+    const credPath = path.join(tmpDir, '.credentials.json');
+    const body = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'planted-tok',
+        subscriptionType: 'claude_max_20',
+        expiresAt,
+      },
+    });
+    fs.writeFileSync(credPath, body);
+    fs.chmodSync(credPath, mode);
+  }
+
+  test('returns credentials when file is 0o600', () => {
+    writeCreds(0o600, Date.now() + 3_600_000);
+    const result = readFromFile(Date.now());
+    assert.ok(result);
+    assert.equal(result.accessToken, 'planted-tok');
+  });
+
+  test('refuses to read a world-readable credentials file', () => {
+    writeCreds(0o644, Date.now() + 3_600_000);
+    const result = readFromFile(Date.now());
+    assert.equal(result, null, 'permissive credentials file leaked a token');
+  });
+
+  test('refuses to read a group-readable credentials file', () => {
+    writeCreds(0o640, Date.now() + 3_600_000);
+    const result = readFromFile(Date.now());
+    assert.equal(result, null);
+  });
+
+  test('refuses to read a symlinked credentials file', () => {
+    const real = path.join(tmpDir, 'real-creds.json');
+    fs.writeFileSync(real, JSON.stringify({
+      claudeAiOauth: { accessToken: 'via-link', subscriptionType: 'x', expiresAt: Date.now() + 60_000 },
+    }));
+    fs.chmodSync(real, 0o600);
+    const credPath = path.join(tmpDir, '.credentials.json');
+    try { fs.unlinkSync(credPath); } catch { /* ignore */ }
+    fs.symlinkSync(real, credPath);
+
+    const result = readFromFile(Date.now());
+    assert.equal(result, null, 'symlinked credentials file must not be followed');
   });
 });
 
