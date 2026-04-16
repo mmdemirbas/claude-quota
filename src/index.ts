@@ -6,6 +6,7 @@ import { render } from './render.js';
 import { terminalDims } from './terminal.js';
 import { ensureDashboardHtml } from './dashboard.js';
 import { writeFileSecure } from './secure-fs.js';
+import { warn } from './log.js';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,8 +69,11 @@ async function main(): Promise<void> {
     // Ensure the dashboard HTML shell exists (data.js is written by usage.ts)
     ensureDashboardHtml();
   } catch (error) {
+    // stdout IS the statusline — error text here would render literally
+    // in Claude Code. Send to stderr so the terminal (not the statusline)
+    // surfaces the failure.
     const msg = error instanceof Error ? error.message : 'Unknown error';
-    console.log(`[claude-quota] Error: ${msg}`);
+    warn('render failed', { msg });
   }
 }
 
