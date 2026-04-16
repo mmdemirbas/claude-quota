@@ -356,6 +356,20 @@ const JS = `
 var FIVE_HOUR_MS = 5 * 60 * 60 * 1000;
 var SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
 
+// HTML-escape helper — MUST stay in lockstep with src/html-escape.ts.
+// Applied to every value whose origin is outside this codebase (API
+// responses, credentials file, cached profile) before string-concatenating
+// into innerHTML. Numbers/constants from the codebase bypass it.
+function _esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderDashboard() {
   if (!DATA || !DATA.data) return;
   var raw = DATA.lastGoodData || DATA.data;
@@ -484,7 +498,7 @@ function renderDashboard() {
 
   let html = '<div class="header">'
     + '<h1><span>Claude</span> Usage Dashboard</h1>'
-    + '<div class="meta">' + d.planName
+    + '<div class="meta">' + _esc(d.planName)
     + ' &middot; fetched ' + fmtTime(d.fetchedAt)
     + rlBadge
     + ' &middot; <a href="' + USAGE_URL + '" target="_blank" style="color:var(--blue)">usage page \\u2197</a>'
