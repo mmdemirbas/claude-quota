@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { visibleLength, truncate } from '../src/ansi.js';
+import { visibleLength, truncate, hyperlink } from '../src/ansi.js';
 
 // ── visibleLength ─────────────────────────────────────────────────────────────
 
@@ -156,5 +156,69 @@ describe('truncate', () => {
 
   test('visibleLength fast path: string with no \\x1b returns raw length', () => {
     assert.equal(visibleLength('just plain text'), 15);
+  });
+});
+
+// ── OSC 8 hyperlinks ─────────────────────────────────────────────────────────
+
+describe('hyperlink', () => {
+  test('wraps text in the ST-terminated OSC 8 frame', () => {
+    const link = hyperlink('web', 'file:///tmp/x.html');
+    assert.equal(link, '\x1b]8;;file:///tmp/x.html\x1b\\web\x1b]8;;\x1b\\');
+  });
+
+  test('visibleLength treats the link as equal to the visible text', () => {
+    const link = hyperlink('⧉ web', 'file:///tmp/x.html');
+    assert.equal(visibleLength(link), 5);
+  });
+
+  test('visibleLength works for SGR colours layered inside a hyperlink', () => {
+    const link = hyperlink('\x1b[31mred\x1b[0m', 'file:///tmp/x.html');
+    assert.equal(visibleLength(link), 3);
+  });
+
+  test('truncate preserves a hyperlink fully inside the cut boundary', () => {
+    const line = `prefix ${hyperlink('web', 'file:///x.html')} suffix`;
+    // visible = 'prefix web suffix' = 17
+    assert.equal(visibleLength(line), 17);
+    const cut = truncate(line, 10);
+    assert.equal(visibleLength(cut), 10);
+    // Keeps the full link (ends with the close frame) and leaves the
+    // trailing " s" partially cut.
+    assert.ok(cut.includes('\x1b]8;;file:///x.html\x1b\\web\x1b]8;;\x1b\\'));
+  });
+
+  test('truncate closes a live hyperlink if the cut lands inside it', () => {
+    const line = 'AAA' + hyperlink('web-link', 'file:///x.html') + 'BBB';
+    // visible = 'AAAweb-linkBBB' = 14
+    const cut = truncate(line, 5); // keep 'AAAwe' (3 + 2 inside link)
+    assert.equal(visibleLength(cut), 5);
+    // Must contain the OSC 8 close frame so the terminal doesn't stay
+    // in link mode for whatever content we emit next.
+    assert.ok(cut.endsWith('\x1b]8;;\x1b\\'),
+      `cut must terminate the open link; got: ${JSON.stringify(cut)}`);
+  });
+
+  test('truncate does not add a redundant close when the link closed naturally', () => {
+    // Link fully inside cut; cut point is past the close frame → no
+    // second close should be appended.
+    const line = hyperlink('ab', 'file:///x.html') + 'CDEFG';
+    const cut = truncate(line, 3); // 'ab' (linked) + 'C'
+    const closeCount = (cut.match(/\x1b\]8;;\x1b\\/g) ?? []).length;
+    assert.equal(closeCount, 1, 'exactly one close frame expected');
+  });
+
+  test('truncate still closes open colour when cut lands inside both', () => {
+    // Colour + link open together; cut must append both close sequences.
+    const line = '\x1b[31m' + hyperlink('linked', 'file:///x.html');
+    const cut = truncate(line, 3); // 'lin'
+    assert.ok(cut.endsWith('\x1b]8;;\x1b\\\x1b[0m') || cut.endsWith('\x1b[0m\x1b]8;;\x1b\\') || cut.includes('\x1b]8;;\x1b\\'));
+    assert.ok(cut.includes('\x1b[0m'), 'colour reset must be present');
+  });
+
+  test('visibleLength strips OSC 8 terminated with BEL as well as ST', () => {
+    // Some terminals emit OSC 8 with a BEL (0x07) terminator instead of ST.
+    const withBel = '\x1b]8;;file:///x.html\x07web\x1b]8;;\x07';
+    assert.equal(visibleLength(withBel), 3);
   });
 });
