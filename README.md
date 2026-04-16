@@ -153,3 +153,30 @@ s, then the warning appears.
 
 **`⟳` indicator** — you hit a rate limit on the usage API. Last-known data is shown with exponential
 backoff (60 s → 5 min). The `⟳` clears once a fresh fetch succeeds.
+
+**Warning `[claude-quota] cache file rejected ... reason=permissive-mode`** — an old cache file
+was written before the permission hardening shipped. The plugin refuses to read files with group
+or world permission bits and re-fetches; the warning clears after the next successful fetch writes
+a fresh `0600` cache. Set `CLAUDE_QUOTA_SILENT=1` to suppress the line if you prefer.
+
+## Security model
+
+- **Credential source**: the OAuth token is read from the macOS Keychain first, with
+  `~/.claude/.credentials.json` as a fallback on non-macOS hosts. The fallback file is refused
+  unless it is `0600` and owned by the current user, so a token planted by another local user
+  cannot be consumed.
+- **Cache files**: `data.js`, `credit-grant.js`, `.profile-cache.json`, and `dashboard.html` live
+  under `~/.claude/plugins/claude-quota/` with mode `0600`. The renderer refuses to read cache
+  files with broader modes, which prevents a second local user from poisoning the dashboard input.
+- **Dashboard output**: all externally-sourced strings (currently the plan name) are HTML-escaped
+  before being inserted into `dashboard.html`. A tampered API response cannot execute script in
+  the dashboard page.
+- **HTTPS**: calls to `api.anthropic.com` use Node's default system trust store with a minimum
+  TLS version of `TLSv1.2`. Anthropic's leaf certificate is NOT pinned because Anthropic rotates
+  it without publishing a pin set — a hardcoded pin would eventually cause a hard outage. This
+  means an attacker with the ability to install a trusted CA on the host (root, admin, or a
+  corporate MDM profile) can intercept API traffic. The `0600` cache files and the HTML escaping
+  above are the defence-in-depth against a successful intercept.
+- **Stderr warnings**: auth failures (HTTP 401/403), rejected cache files, and rejected
+  credential files emit a single-line warning to stderr. Rate limits and normal expiry stay
+  silent. Set `CLAUDE_QUOTA_SILENT=1` to disable all warnings.

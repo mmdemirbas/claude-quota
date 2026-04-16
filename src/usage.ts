@@ -124,8 +124,29 @@ function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
+//
+// TLS TRUST MODEL
+// ───────────────
+// Calls to api.anthropic.com rely on Node's default HTTPS validation
+// against the system certificate store. We do NOT pin Anthropic's
+// certificate: Anthropic rotates its leaf cert and does not publish a
+// pin set, so any hardcoded hash would eventually cause a hard outage.
+//
+// Implications the user should know:
+//   - Anyone with the ability to install a trusted CA on the machine
+//     (root/admin, or a corporate MDM profile) can MITM our API calls
+//     and inject arbitrary usage data or redirect the OAuth token.
+//   - Node's minimum TLS version is pinned below to TLSv1.2; downgrade
+//     attacks to SSLv3/TLSv1.0 are refused.
+//
+// Mitigations that already exist elsewhere:
+//   - The dashboard escapes user-controlled fields so an injected
+//     planName cannot execute script (see dashboard.ts _esc).
+//   - Cache files are 0o600 so a MITM'd response still cannot be
+//     read by other local users from disk (see secure-fs.ts).
 
 const MAX_RESPONSE_BODY = 1_048_576; // 1 MB guard
+const MIN_TLS_VERSION = 'TLSv1.2' as const;
 
 function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null; error?: ApiError; retryAfterSec?: number }> {
   return new Promise((resolve) => {
@@ -138,6 +159,7 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
         'anthropic-beta': 'oauth-2025-04-20',
         'User-Agent': 'claude-quota/0.2',
       },
+      minVersion: MIN_TLS_VERSION,
       timeout: API_TIMEOUT_MS,
     }, (res) => {
       let body = '';
@@ -151,6 +173,12 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
           const retryRaw = res.headers['retry-after'];
           const retryVal = Array.isArray(retryRaw) ? retryRaw[0] : retryRaw;
           const retryAfterSec = retryVal ? parseInt(retryVal, 10) || undefined : undefined;
+          // Surface auth failures distinctly so a revoked or rotated token
+          // does not present as a generic "API down". 429 stays quiet —
+          // rate-limits are handled with UI backoff, not warnings.
+          if (code === 401 || code === 403) {
+            warn('usage API auth failed', { code });
+          }
           resolve({ data: null, error, retryAfterSec });
           return;
         }
@@ -289,6 +317,7 @@ function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | null> {
         'anthropic-beta': 'oauth-2025-04-20',
         'User-Agent': 'claude-quota/0.2',
       },
+      minVersion: MIN_TLS_VERSION,
       timeout: API_TIMEOUT_MS,
     }, (res) => {
       let body = '';
