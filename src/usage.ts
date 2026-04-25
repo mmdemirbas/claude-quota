@@ -25,7 +25,7 @@ const CACHE_RATE_LIMITED_MAX_MS = 10 * 60_000; // cap the dwell at 10 min so an 
                                                 // sustained 429 doesn't hold the line indefinitely.
 const CACHE_RATE_LIMITED_JITTER = 0.2;       // ±20% backoff jitter to keep parallel instances
                                               //   from re-converging onto the same retry boundary.
-const FETCH_COORDINATION_MS = 20_000;       // 20s — if fetcher hasn't written by now, it died
+const FETCH_COORDINATION_MS = 20_000;       // 20s — stale-lock reclaim threshold (must exceed API_TIMEOUT_MS so an in-flight fetch's lock isn't stolen by a peer)
 const PROFILE_CACHE_TTL_MS = 24 * 60 * 60_000; // 24h — org UUID rarely changes
 const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — balance changes only on top-up
 // "No grant" is a much more stable state — most users never enable extra
@@ -147,11 +147,11 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
     const ttl = cache.data.apiUnavailable ? CACHE_FAILURE_TTL_MS : CACHE_TTL_MS;
     const age = now - cache.timestamp;
     if (age < ttl) {
-      // A previous fetch was started but never completed (process killed after bump).
-      // After the coordination window, stop trusting the bump and force re-fetch.
-      if (cache.fetchStartedAt && now - cache.fetchStartedAt >= FETCH_COORDINATION_MS) {
-        return null;
-      }
+      // No fetcher-death detection here: the .fetch.lock file's stale-
+      // reclaim covers that. If a fetcher died mid-flight, the next
+      // acquireFetchLock caller picks up the lock after FETCH_COORDINATION_MS
+      // and re-fetches; this read path just serves the (slightly stale)
+      // cache until then.
       const display = (cache.data.apiError === 'rate-limited' && cache.lastGoodData)
         ? { ...hydrateDates(cache.lastGoodData), apiError: 'rate-limited' as const }
         : hydrateDates(cache.data);
@@ -191,7 +191,6 @@ export function recoverCacheState(cachePath: string): { prevCount: number; lastG
 
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
   const cache: CacheFile = { data, timestamp, ...opts };
-  delete cache.fetchStartedAt; // fetch completed — clear the coordination lock
   writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
 }
 
@@ -371,14 +370,14 @@ export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsag
 /**
  * Bump the cache timestamp without changing data.
  *
- * Prevents parallel instances from all fetching at the same time:
- * downstream readers see a fresh timestamp (so age < TTL) and serve
- * the cached value instead of triggering their own fetch.
+ * Prevents parallel instances from all *spawning a background refresh*
+ * at the same time: downstream `readCache` consumers see a fresh
+ * timestamp (so age < CACHE_SOFT_TTL_MS, isStale=false) and don't
+ * trigger another spawn. Fetch coordination is owned by the
+ * .fetch.lock file — this function only suppresses redundant spawns.
  *
  * Exported so the parent process can bump *before* spawning the
- * detached background refresher — closing the window where a third
- * parallel instance could read the still-stale cache, also flag it
- * stale, and spawn a duplicate refresher.
+ * detached background refresher.
  */
 export function bumpCacheTimestamp(now: number = Date.now()): void {
   try {
@@ -390,7 +389,6 @@ export function bumpCacheTimestamp(now: number = Date.now()): void {
     // parallel instances all see an expired backoff and race to fetch.
     if (cache.data.apiUnavailable && !cache.rateLimitedCount) return;
     cache.timestamp = now;
-    cache.fetchStartedAt = now;
     writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
   } catch { /* no cache to bump */ }
 }

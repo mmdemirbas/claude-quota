@@ -112,8 +112,6 @@ export interface CacheFile {
   rateLimitedCount?: number;
   retryAfterUntil?: number;
   lastGoodData?: UsageData;
-  /** Set when a fetch starts; cleared when it completes. Detects killed fetchers. */
-  fetchStartedAt?: number;
 }
 
 export interface GitStatus {
