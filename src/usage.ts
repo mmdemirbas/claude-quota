@@ -1,6 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import * as https from 'node:https';
 import { StringDecoder } from 'node:string_decoder';
 import type { ClientRequest, IncomingMessage } from 'node:http';
@@ -10,6 +9,7 @@ import type {
 } from './types.js';
 import { readCredentials, getPlanName } from './credentials.js';
 import { readFileSecure, writeFileSecure } from './secure-fs.js';
+import { pluginDir } from './paths.js';
 import { warn } from './log.js';
 
 const CACHE_TTL_MS = 2 * 60_000;           // 2 min hard TTL (force re-fetch)
@@ -22,20 +22,16 @@ const PROFILE_CACHE_TTL_MS = 24 * 60 * 60_000; // 24h — org UUID rarely change
 const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — changes only on top-up
 const API_TIMEOUT_MS = 15_000;
 
-function getPluginDir(): string {
-  return path.join(os.homedir(), '.claude', 'plugins', 'claude-quota');
-}
-
 function getCachePath(): string {
-  return path.join(getPluginDir(), 'data.js');
+  return path.join(pluginDir(), 'data.js');
 }
 
 function getProfileCachePath(): string {
-  return path.join(getPluginDir(), '.profile-cache.json');
+  return path.join(pluginDir(), '.profile-cache.json');
 }
 
 function getCreditGrantCachePath(): string {
-  return path.join(getPluginDir(), 'credit-grant.js');
+  return path.join(pluginDir(), 'credit-grant.js');
 }
 
 /**
@@ -346,7 +342,7 @@ function bumpCacheTimestamp(now: number): void {
 /** Cache file writer: plugin dir is created if missing, output is atomic and 0o600. */
 function writeCacheFile(filePath: string, content: string): void {
   try {
-    fs.mkdirSync(getPluginDir(), { recursive: true });
+    fs.mkdirSync(pluginDir(), { recursive: true });
   } catch { /* ignore */ }
   writeFileSecure(filePath, content);
 }
