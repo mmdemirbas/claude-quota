@@ -259,6 +259,14 @@ function collectBody(req: ClientRequest, res: IncomingMessage): Promise<{ body: 
 
 function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null; error?: ApiError; retryAfterSec?: number }> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v: { data: UsageApiResponse | null; error?: ApiError; retryAfterSec?: number }): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(v);
+    };
+
     const req = https.request({
       hostname: 'api.anthropic.com',
       path: '/api/oauth/usage',
@@ -273,7 +281,7 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
     }, (res) => {
       void collectBody(req, res).then(({ body, overflowed }) => {
         if (overflowed) {
-          resolve({ data: null, error: 'parse' });
+          finish({ data: null, error: 'parse' });
           return;
         }
         if (res.statusCode !== 200) {
@@ -288,19 +296,24 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
           if (code === 401 || code === 403) {
             warn('usage API auth failed', { code });
           }
-          resolve({ data: null, error, retryAfterSec });
+          finish({ data: null, error, retryAfterSec });
           return;
         }
         try {
-          resolve({ data: JSON.parse(body) as UsageApiResponse });
+          finish({ data: JSON.parse(body) as UsageApiResponse });
         } catch {
-          resolve({ data: null, error: 'parse' });
+          finish({ data: null, error: 'parse' });
         }
       });
     });
 
-    req.on('error', () => resolve({ data: null, error: 'network' }));
-    req.on('timeout', () => { req.destroy(); resolve({ data: null, error: 'timeout' }); });
+    req.on('error', () => finish({ data: null, error: 'network' }));
+    req.on('timeout', () => { req.destroy(); finish({ data: null, error: 'timeout' }); });
+    // req.timeout above is per-activity. A server that trickles bytes
+    // slower than that interval can hold the connection open
+    // indefinitely; this absolute deadline destroys the request after
+    // API_TIMEOUT_MS regardless of whether bytes are still flowing.
+    const deadline = setTimeout(() => { req.destroy(); finish({ data: null, error: 'timeout' }); }, API_TIMEOUT_MS);
     req.end();
   });
 }
@@ -518,6 +531,14 @@ function writeCreditGrantCache(creditGrant: number | null, timestamp: number): v
 
 function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | null> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v: T | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      resolve(v);
+    };
+
     const req = https.request({
       hostname: 'api.anthropic.com',
       path: urlPath,
@@ -531,13 +552,15 @@ function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | null> {
       timeout: API_TIMEOUT_MS,
     }, (res) => {
       void collectBody(req, res).then(({ body, overflowed }) => {
-        if (overflowed || res.statusCode !== 200) { resolve(null); return; }
-        try { resolve(JSON.parse(body) as T); }
-        catch { resolve(null); }
+        if (overflowed || res.statusCode !== 200) { finish(null); return; }
+        try { finish(JSON.parse(body) as T); }
+        catch { finish(null); }
       });
     });
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => finish(null));
+    req.on('timeout', () => { req.destroy(); finish(null); });
+    // Absolute deadline (see fetchApi for rationale).
+    const deadline = setTimeout(() => { req.destroy(); finish(null); }, API_TIMEOUT_MS);
     req.end();
   });
 }
