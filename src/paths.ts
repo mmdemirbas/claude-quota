@@ -15,10 +15,12 @@ export function dashboardHtmlPath(): string {
  * `file://` URL pointing at the dashboard HTML file, suitable for an
  * OSC 8 hyperlink in the statusline or a plain click target in docs.
  *
- * Avoids any path normalization: the URL points at the exact path the
- * plugin writes to, so clicking it opens the live file even if the
- * user's shell has a different cwd.
+ * Path components are percent-encoded so a homedir containing spaces
+ * or other reserved characters produces a valid URL (terminals and
+ * browsers reject `file:///My Folder/...` as malformed). The URL
+ * constructor handles the encoding correctly without disturbing legal
+ * path separators.
  */
 export function dashboardFileUrl(): string {
-  return `file://${dashboardHtmlPath()}`;
+  return new URL(`file://${dashboardHtmlPath()}`).toString();
 }
