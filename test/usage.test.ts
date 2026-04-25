@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { clamp, parseDate, parseExtraUsage } from '../src/usage.js';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate } from '../src/usage.js';
 
 describe('clamp', () => {
   test('passes through values in range', () => {
@@ -33,6 +33,42 @@ describe('clamp', () => {
   test('returns null for Infinity', () => {
     assert.equal(clamp(Infinity), null);
     assert.equal(clamp(-Infinity), null);
+  });
+});
+
+// Regression: hydrateDates used to call `new Date(...)` directly; an
+// old-schema or corrupted cache value (e.g. "bogus") produced Invalid Date,
+// which leaked NaN/undefined into the renderer's resetIn/windowGlyph output.
+describe('rehydrateDate', () => {
+  test('returns null for null/undefined', () => {
+    assert.equal(rehydrateDate(null), null);
+    assert.equal(rehydrateDate(undefined), null);
+  });
+
+  test('parses an ISO string from a serialized cache', () => {
+    const d = rehydrateDate('2026-04-04T12:00:00Z');
+    assert.ok(d instanceof Date);
+    assert.equal(d?.getUTCFullYear(), 2026);
+  });
+
+  test('passes through an already-Date value', () => {
+    const orig = new Date('2026-04-04T12:00:00Z');
+    assert.ok(rehydrateDate(orig)?.getTime() === orig.getTime());
+  });
+
+  test('returns null for a malformed date string', () => {
+    assert.equal(rehydrateDate('not-a-date'), null);
+    assert.equal(rehydrateDate(''), null);
+  });
+
+  test('returns null for an Invalid Date instance', () => {
+    assert.equal(rehydrateDate(new Date('bogus')), null);
+  });
+
+  test('returns null for unexpected types (objects, arrays, booleans)', () => {
+    assert.equal(rehydrateDate({} as unknown), null);
+    assert.equal(rehydrateDate([] as unknown), null);
+    assert.equal(rehydrateDate(true as unknown), null);
   });
 });
 

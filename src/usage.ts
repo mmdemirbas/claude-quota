@@ -62,13 +62,29 @@ function writeJsCache(filePath: string, varName: string, json: string): void {
 
 // ── Cache ──────────────────────────────────────────────────────────────────
 
+/**
+ * Coerce a JSON-deserialized date value (string from the on-disk cache,
+ * or already-a-Date if hydrateDates is called twice) back to a Date.
+ * Returns null on a malformed or non-parseable value so the renderer
+ * never sees an Invalid Date — that previously leaked NaN/undefined into
+ * the bar/glyph rendering. Exported for testing.
+ */
+export function rehydrateDate(v: unknown): Date | null {
+  if (v == null) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  if (typeof v !== 'string' && typeof v !== 'number') return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function hydrateDates(data: UsageData): UsageData {
-  const d = { ...data };
-  if (d.fiveHourResetAt) d.fiveHourResetAt = new Date(d.fiveHourResetAt);
-  if (d.sevenDayResetAt) d.sevenDayResetAt = new Date(d.sevenDayResetAt);
-  if (d.sonnetResetAt) d.sonnetResetAt = new Date(d.sonnetResetAt);
-  if (d.opusResetAt) d.opusResetAt = new Date(d.opusResetAt);
-  return d;
+  return {
+    ...data,
+    fiveHourResetAt: rehydrateDate(data.fiveHourResetAt),
+    sevenDayResetAt: rehydrateDate(data.sevenDayResetAt),
+    sonnetResetAt: rehydrateDate(data.sonnetResetAt),
+    opusResetAt: rehydrateDate(data.opusResetAt),
+  };
 }
 
 function readCache(now: number): { data: UsageData; isStale: boolean } | null {

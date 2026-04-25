@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { resetIn, formatMoney, bar } from '../src/render.js';
+import { resetIn, formatMoney, bar, windowGlyph, calcPace } from '../src/render.js';
 import { visibleLength } from '../src/ansi.js';
 
 const DIM = '\x1b[2m';
@@ -56,6 +56,11 @@ describe('resetIn', () => {
   test('drops hours when d+h format would exceed 5 chars', () => {
     // 10d15h = 6 chars — overflows. Expected: '10d'.
     assert.equal(resetIn(new Date(now + 10 * 86_400_000 + 15 * 3_600_000), now), '10d');
+  });
+
+  // Regression: an Invalid Date used to slip through and produce "NaNh".
+  test('returns empty string for an Invalid Date', () => {
+    assert.equal(resetIn(new Date('not-a-date'), now), '');
   });
 });
 
@@ -222,5 +227,25 @@ describe('bar (with elapsed fraction — pace coloring)', () => {
       const b = bar(pct, 10, plainColor, 200, elapsed);
       assert.equal(visibleLength(b), 10, `pct=${pct} elapsed=${elapsed}`);
     }
+  });
+});
+
+// ── Invalid Date defense (regression for hydrateDates leak) ─────────────────
+//
+// Before the hydrateDates fix, an old-schema or corrupted on-disk cache could
+// produce an Invalid Date that flowed through windowGlyph and calcPace,
+// surfacing as `undefined` glyphs and NaN-percentages in the rendered line.
+// usage.ts now drops Invalid Date at the cache-rehydration boundary; these
+// tests pin the in-renderer guards as defense in depth.
+describe('Invalid Date guards', () => {
+  const SEVEN_DAY_MS = 7 * 24 * 60 * 60 * 1000;
+  const invalid = new Date('not-a-date');
+
+  test('windowGlyph returns the empty-window glyph for Invalid Date', () => {
+    assert.equal(windowGlyph(invalid, SEVEN_DAY_MS, now), '○');
+  });
+
+  test('calcPace returns null for Invalid Date', () => {
+    assert.equal(calcPace(50, invalid, SEVEN_DAY_MS, now), null);
   });
 });

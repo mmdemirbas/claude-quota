@@ -138,7 +138,11 @@ export function bar(pct: number, width: number, colorFn: (p: number) => string, 
 /** Exported for testing. */
 export function resetIn(resetAt: Date | null, now: number): string {
   if (!resetAt) return '';
-  const diffMs = resetAt.getTime() - now;
+  const t = resetAt.getTime();
+  // Defense in depth: usage.ts hydrateDates already drops Invalid Date,
+  // but a malformed Date here would otherwise produce "NaNm"/"NaNh".
+  if (isNaN(t)) return '';
+  const diffMs = t - now;
   if (diffMs <= 0) return '';
 
   const mins = Math.ceil(diffMs / 60000);
@@ -198,7 +202,9 @@ export function calcPace(
   now: number,
 ): PaceResult | null {
   if (!resetAt) return null;
-  const remaining = resetAt.getTime() - now;
+  const t = resetAt.getTime();
+  if (isNaN(t)) return null;
+  const remaining = t - now;
   if (remaining <= 0 || remaining >= windowMs) return null;
   const elapsedFraction = (windowMs - remaining) / windowMs;
   if (elapsedFraction < 0.02) return null;
@@ -227,7 +233,9 @@ export function calcPace(
  */
 export function windowGlyph(resetAt: Date | null, windowMs: number, now: number): string {
   if (!resetAt) return '○';
-  const remaining = resetAt.getTime() - now;
+  const t = resetAt.getTime();
+  if (isNaN(t)) return '○';
+  const remaining = t - now;
   if (remaining <= 0) return '●';
   if (remaining >= windowMs) return '○';
   const elapsedFraction = (windowMs - remaining) / windowMs;
