@@ -81,7 +81,10 @@ function isStdinShape(x: unknown): x is StdinData {
 }
 
 export function getModelName(stdin: StdinData): string {
-  return stdin.model?.display_name ?? 'Claude';
+  // Trust nothing from stdin: a non-string display_name (object, number,
+  // boolean) would later crash extractFamily's `.replace` / `.toLowerCase`.
+  const v = stdin.model?.display_name;
+  return typeof v === 'string' && v.length > 0 ? v : 'Claude';
 }
 
 export function getContextPercent(stdin: StdinData): number {
@@ -106,9 +109,12 @@ function safeNum(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0;
 }
 
-/** Reads effort level from whichever field name Claude Code uses in the current version. */
+/** Reads effort level from whichever field name Claude Code uses in the current version.
+ * Returns null for any non-string value — Claude Code on Windows has been
+ * observed sending an object here, which crashed `effort.toLowerCase()`. */
 export function getEffortLevel(stdin: StdinData): string | null {
-  return stdin.effort_level ?? stdin.effortLevel ?? stdin.effort ?? null;
+  const v = stdin.effort_level ?? stdin.effortLevel ?? stdin.effort;
+  return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
 /**

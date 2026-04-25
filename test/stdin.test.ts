@@ -19,6 +19,15 @@ describe('getModelName', () => {
   test('returns fallback when display_name is absent', () => {
     assert.equal(getModelName({ model: {} }), 'Claude');
   });
+
+  // Defends against `model.display_name` being a non-string at render time
+  // — would have thrown inside extractFamily's `.replace`.
+  test('returns fallback for non-string display_name', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(getModelName({ model: { display_name: 42 } } as any), 'Claude');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(getModelName({ model: { display_name: { name: 'x' } } } as any), 'Claude');
+  });
 });
 
 describe('getContextPercent', () => {
@@ -242,5 +251,20 @@ describe('getEffortLevel', () => {
 
   test('returns null when absent', () => {
     assert.equal(getEffortLevel({}), null);
+  });
+
+  // Claude Code on Windows has been observed sending an object here; the
+  // raw value used to flow into render.ts where `.toLowerCase()` threw.
+  test('returns null for non-string values', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(getEffortLevel({ effort_level: { level: 'high' } } as any), null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(getEffortLevel({ effort_level: 7 } as any), null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    assert.equal(getEffortLevel({ effort_level: true } as any), null);
+  });
+
+  test('returns null for empty string', () => {
+    assert.equal(getEffortLevel({ effort_level: '' }), null);
   });
 });

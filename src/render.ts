@@ -2,6 +2,19 @@ import type { StdinData, UsageData, GitStatus } from './types.js';
 import { getModelName, getContextPercent, getProjectName, getEffortLevel } from './stdin.js';
 import { visibleLength, truncate, hyperlink } from './ansi.js';
 import { dashboardFileUrl } from './paths.js';
+import { warn } from './log.js';
+
+// ── String coercion ───────────────────────────────────────────────────────
+//
+// JSON-deserialised inputs (stdin from Claude Code, cached UsageData on
+// disk) cannot be trusted to match their type annotations: a future
+// schema change or hostile cache file may put `{level: 'high'}` where a
+// string was promised, and `.toLowerCase()` then throws inside the
+// renderer. asString collapses every non-string value to '' so call
+// sites can chain string methods without guarding individually.
+
+/** Coerce arbitrary value to string; returns '' for null/undefined/non-string. */
+const asString = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 // ── ANSI colors ────────────────────────────────────────────────────────────
 
@@ -26,8 +39,10 @@ const darken = (color: string): string => `${DIM}${color}`;
 
 // ── Model name display ─────────────────────────────────────────────────────
 
-function extractFamily(displayName: string): string {
-  const s = displayName.replace(/^Claude\s+/i, '').trim();
+function extractFamily(displayName: unknown): string {
+  const raw = asString(displayName);
+  if (!raw) return 'claude';
+  const s = raw.replace(/^Claude\s+/i, '').trim();
   // "Family Major.Minor"  e.g. "Sonnet 4.6"
   let m = s.match(/^(\w+)\s+\d+\.\d+$/);
   if (m) return m[1].toLowerCase();
@@ -42,10 +57,16 @@ function extractFamily(displayName: string): string {
  * Format the model line as "family effort" (e.g. "sonnet high").
  * Falls back to just the family name when effort is absent.
  * Exported for testing.
+ *
+ * Both arguments are typed `unknown` because callers receive them from
+ * JSON-deserialised stdin, where Claude Code on Windows has been seen
+ * passing a non-string `effort`. Coercing here keeps the renderer safe
+ * even if a future stdin getter forgets to narrow.
  */
-export function modelDisplay(displayName: string, effort: string | null | undefined): string {
+export function modelDisplay(displayName: unknown, effort: unknown): string {
   const family = extractFamily(displayName);
-  return effort ? `${family} ${effort.toLowerCase()}` : family;
+  const e = asString(effort);
+  return e ? `${family} ${e.toLowerCase()}` : family;
 }
 
 // ── Color by severity ──────────────────────────────────────────────────────
@@ -555,6 +576,27 @@ export interface RenderInput {
   rows?: number;
 }
 
+/**
+ * Per-line safety net: build and emit one statusline row inside a
+ * try/catch. A throw inside one segment (a future schema drift, a
+ * stale on-disk cache, a Windows-specific quirk) does not blank the
+ * other rows — the failing row is dropped silently and a single warn
+ * lands on stderr so debugging is still possible. The outer try/catch
+ * in index.ts main() handles plumbing failures that occur before any
+ * row gets a chance to build.
+ */
+function safeEmit(label: string, build: () => string | null): void {
+  let line: string | null;
+  try {
+    line = build();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    warn('render row failed', { row: label, err: msg });
+    return;
+  }
+  if (line !== null) console.log(line);
+}
+
 export function render(input: RenderInput): void {
   const { stdin, usage, git } = input;
   const now = input.now ?? Date.now();
@@ -564,7 +606,10 @@ export function render(input: RenderInput): void {
   // ── Column-0 width: pad model and plan to the same width so bars align ─────
   // Only relevant when rows ≥ 2 (multi-line output).
   const modelText = modelDisplay(getModelName(stdin), getEffortLevel(stdin));
-  const planText  = (usage?.planName ?? '').toLowerCase();
+  // planName comes from the on-disk cache (JSON) and the credentials parser;
+  // both typed string but historically tolerant of weird subscriptionType
+  // values. Coerce defensively so a stale cache cannot crash the render.
+  const planText  = asString(usage?.planName).toLowerCase();
   // The dashboard link is pinned to the model prefix on line 1 — " ⧉" =
   // 2 visible chars. Lines 2 and 3 don't carry the link, so col0Width
   // includes the link width on the model side and a clamp for the
@@ -582,8 +627,6 @@ export function render(input: RenderInput): void {
   const ctxPctStr = `${ctxPct}%`.padStart(4);
   const project = getProjectName(stdin);
 
-  let line1: string;
-
   // The dashboard link is pinned to the model prefix on every layout
   // height. " ⧉" (2 visible chars). Always shown so the affordance is
   // discoverable on narrow terminals too.
@@ -591,44 +634,47 @@ export function render(input: RenderInput): void {
 
   const status = apiStatusHint(usage ?? null);
 
-  if (rows === 1) {
-    // Single-row mode: model + link + compact ctx + compact 5h + compact 7d
-    // when usage is available. Bars omitted; compact (label + pct) format
-    // throughout. Git info is dropped in favour of quota percentages.
-    // The rate-limit / API-down hint is appended on the right so the
-    // user sees the same status indicator they'd see at rows=3.
-    const ctxCompact = `${dim('ctx:')} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
-    const showQuotas = !!usage && !usage.apiUnavailable;
-    const parts: (string | null)[] = [
-      `${c(CYAN, modelText)}${link}`,
-      ctxCompact,
-      showQuotas ? renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, 'compact') : null,
-      showQuotas ? renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, 'compact') : null,
-    ];
-    line1 = truncate(
-      parts.filter((p): p is string => p !== null).join(SEP),
-      cols - status.width,
-    ) + status.padded;
-  } else {
-    // Multi-row mode: model + link + ctx bar + project/git.
-    // Git degrades via detail tiers; the link is part of the col-0 prefix
-    // and never drops out.
-    const ctxBar = bar(ctxPct, 10, ctxColor);
-    const ctxSegment = `${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
-    // pad0 still pads to col0Width; we manually inject the link inside
-    // the colored model text so visible width = modelText + LINK_WIDTH.
-    const modelPrefix = `${CYAN}${modelText}${R}${link}`
-      + ' '.repeat(Math.max(0, col0Width - modelText.length - LINK_WIDTH));
-    line1 = fitLine(
-      (detail) => [
-        modelPrefix,
-        ctxSegment,
-        renderGit(project, git, detail),
-      ],
-      cols,
-    );
-  }
-  console.log(`${R}${line1}`);
+  safeEmit('line1', () => {
+    let line1: string;
+    if (rows === 1) {
+      // Single-row mode: model + link + compact ctx + compact 5h + compact 7d
+      // when usage is available. Bars omitted; compact (label + pct) format
+      // throughout. Git info is dropped in favour of quota percentages.
+      // The rate-limit / API-down hint is appended on the right so the
+      // user sees the same status indicator they'd see at rows=3.
+      const ctxCompact = `${dim('ctx:')} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
+      const showQuotas = !!usage && !usage.apiUnavailable;
+      const parts: (string | null)[] = [
+        `${c(CYAN, modelText)}${link}`,
+        ctxCompact,
+        showQuotas ? renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, 'compact') : null,
+        showQuotas ? renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, 'compact') : null,
+      ];
+      line1 = truncate(
+        parts.filter((p): p is string => p !== null).join(SEP),
+        cols - status.width,
+      ) + status.padded;
+    } else {
+      // Multi-row mode: model + link + ctx bar + project/git.
+      // Git degrades via detail tiers; the link is part of the col-0 prefix
+      // and never drops out.
+      const ctxBar = bar(ctxPct, 10, ctxColor);
+      const ctxSegment = `${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
+      // pad0 still pads to col0Width; we manually inject the link inside
+      // the colored model text so visible width = modelText + LINK_WIDTH.
+      const modelPrefix = `${CYAN}${modelText}${R}${link}`
+        + ' '.repeat(Math.max(0, col0Width - modelText.length - LINK_WIDTH));
+      line1 = fitLine(
+        (detail) => [
+          modelPrefix,
+          ctxSegment,
+          renderGit(project, git, detail),
+        ],
+        cols,
+      );
+    }
+    return `${R}${line1}`;
+  });
 
   if (rows < 2) return;
 
@@ -653,20 +699,22 @@ export function render(input: RenderInput): void {
         usage.sonnet !== null || usage.opus !== null ||
         usage.extraUsage !== null || !!planText;
       if (hasContent) {
-        const line2 = fitLine(
-          (detail) => [
-            planText ? pad0(planText, CYAN) : null,
-            renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
-            renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
-            renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
-            renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
-            renderExtraUsage(usage, now, detail),
-          ],
-          cols - syncW,
-        );
-        console.log(`${R}${line2}${syncHint}`);
+        safeEmit('line2-flat', () => {
+          const line2 = fitLine(
+            (detail) => [
+              planText ? pad0(planText, CYAN) : null,
+              renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
+              renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
+              renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
+              renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
+              renderExtraUsage(usage, now, detail),
+            ],
+            cols - syncW,
+          );
+          return `${R}${line2}${syncHint}`;
+        });
       } else if (status.glyph) {
-        console.log(`${R}${status.glyph}`);
+        safeEmit('line2-glyph', () => `${R}${status.glyph}`);
       }
     } else {
       // rows ≥ 3: standard two-account-line layout.
@@ -675,44 +723,48 @@ export function render(input: RenderInput): void {
       const line2HasContent = usage.fiveHour !== null || usage.sonnet !== null || !!planText;
       if (line2HasContent) {
         // syncHint goes on line 2 only when there is no line 3.
-        const line2 = fitLine(
-          (detail) => [
-            planText ? pad0(planText, CYAN) : null,
-            renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
-            renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
-          ],
-          cols - (hasLine3 ? 0 : syncW),
-        );
-        console.log(`${R}${line2}${hasLine3 ? '' : syncHint}`);
+        safeEmit('line2', () => {
+          const line2 = fitLine(
+            (detail) => [
+              planText ? pad0(planText, CYAN) : null,
+              renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, detail),
+              renderQuota('snt:', usage.sonnet, usage.sonnetResetAt, SEVEN_DAY_MS, now, detail),
+            ],
+            cols - (hasLine3 ? 0 : syncW),
+          );
+          return `${R}${line2}${hasLine3 ? '' : syncHint}`;
+        });
       }
 
       if (hasLine3) {
-        const col0Str = (planText && usage.fetchedAt)
-          ? pad0(formatFetchTime(usage.fetchedAt), DIM)
-          : ' '.repeat(col0Width);
-        const line3 = fitLine(
-          (detail) => [
-            planText ? col0Str : null,
-            renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
-            renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
-            renderExtraUsage(usage, now, detail),
-          ],
-          cols - syncW,
-        );
-        console.log(`${R}${line3}${syncHint}`);
+        safeEmit('line3', () => {
+          const col0Str = (planText && usage.fetchedAt)
+            ? pad0(formatFetchTime(usage.fetchedAt), DIM)
+            : ' '.repeat(col0Width);
+          const line3 = fitLine(
+            (detail) => [
+              planText ? col0Str : null,
+              renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, detail),
+              renderQuota('ops:', usage.opus, usage.opusResetAt, SEVEN_DAY_MS, now, detail),
+              renderExtraUsage(usage, now, detail),
+            ],
+            cols - syncW,
+          );
+          return `${R}${line3}${syncHint}`;
+        });
       } else if (!planText && !line2HasContent && status.glyph) {
-        console.log(`${R}${status.glyph}`);
+        safeEmit('line2-glyph', () => `${R}${status.glyph}`);
       }
     }
   } else if (usage?.apiUnavailable) {
     // Standalone status line. Same glyph + colour as the rows=1 hint
     // and the syncHint slot — single source of truth via apiStatusHint.
-    if (planText) {
-      console.log(`${R}${c(CYAN, planText)}${dim(' │ ')}${status.glyph}`);
-    } else {
-      console.log(`${R}${status.glyph}`);
-    }
+    safeEmit('line2-status', () =>
+      planText
+        ? `${R}${c(CYAN, planText)}${dim(' │ ')}${status.glyph}`
+        : `${R}${status.glyph}`,
+    );
   } else if (planText) {
-    console.log(`${R}${c(CYAN, planText)}`);
+    safeEmit('line2-plan', () => `${R}${c(CYAN, planText)}`);
   }
 }

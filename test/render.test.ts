@@ -1,4 +1,4 @@
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { render, modelDisplay, calcPace, formatBalance, TIER_SEGMENT_WIDTH } from '../src/render.js';
 import type { RenderInput } from '../src/render.js';
@@ -92,6 +92,24 @@ describe('modelDisplay', () => {
 
   test('handles legacy "Major.Minor Family" format', () => {
     assert.equal(modelDisplay('Claude 3.5 Sonnet', 'high'), 'sonnet high');
+  });
+
+  // Regression: Claude Code on Windows passed a non-string `effort` and
+  // `effort.toLowerCase()` threw, blanking the entire status line.
+  test('does not throw on non-string effort', () => {
+    assert.doesNotThrow(() => modelDisplay('Claude Sonnet 4.6', { level: 'high' }));
+    assert.doesNotThrow(() => modelDisplay('Claude Sonnet 4.6', 7));
+    assert.doesNotThrow(() => modelDisplay('Claude Sonnet 4.6', true));
+    // Coerces to family-only output — non-string effort is treated as absent.
+    assert.equal(modelDisplay('Claude Sonnet 4.6', { level: 'high' }), 'sonnet');
+  });
+
+  test('does not throw on non-string displayName', () => {
+    assert.doesNotThrow(() => modelDisplay(42, 'high'));
+    assert.doesNotThrow(() => modelDisplay({ name: 'Sonnet' }, 'high'));
+    assert.doesNotThrow(() => modelDisplay(null, 'high'));
+    // Falls back to "claude" family when name is unparseable.
+    assert.equal(modelDisplay(null, 'high'), 'claude high');
   });
 });
 
@@ -903,5 +921,54 @@ describe('height-adaptive edge cases', () => {
         }
       }
     }
+  });
+});
+
+// ── Render resilience ─────────────────────────────────────────────────────
+//
+// One bad value (a non-string from a future stdin schema, a corrupt
+// cache field, an Invalid Date that slipped past hydrateDates) must
+// not blank the entire status line. Each row is built inside a
+// safeEmit guard so a throw drops just that row.
+
+describe('render resilience', () => {
+  const prevSilent = process.env.CLAUDE_QUOTA_SILENT;
+
+  // Quiet the warn() that fires when a row throws — the renderer routes
+  // it to stderr, which would otherwise pollute test output.
+  before(() => { process.env.CLAUDE_QUOTA_SILENT = '1'; });
+  after(() => {
+    if (prevSilent === undefined) delete process.env.CLAUDE_QUOTA_SILENT;
+    else process.env.CLAUDE_QUOTA_SILENT = prevSilent;
+  });
+
+  test('non-string effort_level does not blank the status line', () => {
+    // Reproduces the Windows crash: `effort.toLowerCase is not a function`.
+    // Pre-fix this throw was caught by the outer try/catch in index.ts,
+    // producing zero output. Post-fix we still get all rows.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stdin = { ...baseStdin, effort_level: { level: 'high' } as any };
+    const lines = renderLines({ stdin, usage: baseUsage, git: null, now, rows: 3 });
+    assert.ok(lines.length >= 1, 'expected at least line 1');
+    // The model name should still surface (effort just gets dropped).
+    assert.ok(strip(lines[0]).includes('sonnet'), 'family name should still render');
+  });
+
+  test('non-string display_name does not blank the status line', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stdin = { ...baseStdin, model: { display_name: { x: 1 } as any } };
+    const lines = renderLines({ stdin, usage: baseUsage, git: null, now, rows: 3 });
+    assert.ok(lines.length >= 1, 'expected at least line 1');
+    // Falls back to the literal "claude" family.
+    assert.ok(strip(lines[0]).includes('claude'), 'fallback family name missing');
+  });
+
+  test('non-string planName does not blank the status line', () => {
+    // A corrupt or forward-incompatible cache could produce this; before
+    // the asString fix, .toLowerCase() in render() threw.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const usage = { ...baseUsage, planName: { tier: 'Max' } as any };
+    const lines = renderLines({ stdin: baseStdin, usage, git: null, now, rows: 3 });
+    assert.ok(lines.length >= 1, 'expected at least line 1');
   });
 });
