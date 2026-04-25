@@ -19,18 +19,26 @@ const strip = (s: string) =>
    .replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
 
 function capture(input: Omit<RenderInput, 'now'> & { now?: number }): { line1: string; line2: string; line3: string; full: string } {
+  const lines = renderLines(input);
+  const stripped = lines.map(strip);
+  return { line1: stripped[0] ?? '', line2: stripped[1] ?? '', line3: stripped[2] ?? '', full: stripped.join('\n') };
+}
+
+/**
+ * Capture raw render output (ANSI bytes intact). try/finally so a
+ * thrown render can't leave console.log patched and contaminate
+ * every test that runs after it.
+ */
+function renderLines(input: Omit<RenderInput, 'now'> & { now?: number }): string[] {
   const lines: string[] = [];
   const orig = console.log;
   console.log = (...args: unknown[]) => lines.push(args.join(' '));
-  // try/finally so a render() throw cannot leave console.log patched and
-  // contaminate every subsequent test in the suite.
   try {
     render(input);
   } finally {
     console.log = orig;
   }
-  const stripped = lines.map(strip);
-  return { line1: stripped[0] ?? '', line2: stripped[1] ?? '', line3: stripped[2] ?? '', full: stripped.join('\n') };
+  return lines;
 }
 
 const now = Date.now();
@@ -442,20 +450,12 @@ describe('height-adaptive rendering', () => {
   });
 
   test('rows=2 produces exactly two lines', () => {
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2 });
-    console.log = orig;
+    const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2 });
     assert.equal(lines.length, 2, 'rows=2 must produce exactly 2 lines');
   });
 
   test('rows=2 line 2 contains all quotas (5h, 7d, snt) on one line', () => {
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2 });
-    console.log = orig;
+    const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2 });
     const line2 = lines[1]?.replace(/\x1b\[[0-9;]*m/g, '') ?? '';
     assert.ok(line2.includes('5h:'), '5h missing from rows=2 line 2');
     assert.ok(line2.includes('7d:'), '7d missing from rows=2 line 2');
@@ -463,11 +463,7 @@ describe('height-adaptive rendering', () => {
   });
 
   test('rows=1 produces exactly one line', () => {
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 1 });
-    console.log = orig;
+    const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 1 });
     assert.equal(lines.length, 1, 'rows=1 must produce exactly 1 line');
   });
 
@@ -496,11 +492,7 @@ describe('height-adaptive rendering', () => {
   test('rows=1 line never exceeds column width', () => {
     const widths = [20, 33, 47, 57, 80, 120];
     for (const columns of widths) {
-      const lines: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.join(' '));
-      render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, rows: 1, columns });
-      console.log = orig;
+      const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, rows: 1, columns });
       assert.equal(lines.length, 1, `rows=1 must produce 1 line at columns=${columns}`);
       const visible = vlen(lines[0] ?? '');
       assert.ok(visible <= columns, `visible length ${visible} exceeds columns=${columns}`);
@@ -606,12 +598,7 @@ describe('width-adaptive rendering', () => {
 
   test('line 1 shows the dashboard OSC 8 link at a wide terminal', () => {
     // Wide terminal → full tier → link rendered after the model prefix.
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 120 });
-    console.log = orig;
-
+    const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 120 });
     const rawLine1 = lines[0] ?? '';
     assert.ok(rawLine1.includes('\x1b]8;;file://'),
       'OSC 8 hyperlink opener should appear on line 1 at 120 cols');
@@ -625,11 +612,7 @@ describe('width-adaptive rendering', () => {
     // The link used to be the first thing dropped when width tightened —
     // it's now an always-on UI affordance attached to the model prefix.
     for (const columns of [120, 80, 59, 48, 35, 25]) {
-      const lines: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.join(' '));
-      render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns });
-      console.log = orig;
+      const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns });
       const rawLine1 = lines[0] ?? '';
       assert.ok(rawLine1.includes('\x1b]8;;file://'),
         `link must remain visible at columns=${columns}; got: ${strip(rawLine1)}`);
@@ -639,11 +622,7 @@ describe('width-adaptive rendering', () => {
   test('line 1 visible length still respects column width with link present', () => {
     // Regression: forgetting to strip OSC 8 in visibleLength would blow
     // past the width cap without fitLine noticing.
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 120 });
-    console.log = orig;
+    const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 120 });
     const v = vlen(lines[0] ?? '');
     assert.ok(v <= 120, `line 1 visible length ${v} must not exceed 120`);
   });
@@ -653,11 +632,7 @@ describe('width-adaptive rendering', () => {
   test('no line exceeds the specified column width (invariant across many widths)', () => {
     const widths = [20, 33, 35, 45, 46, 55, 57, 67, 80, 81, 120, 200];
     for (const columns of widths) {
-      const lines: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.join(' '));
-      render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns });
-      console.log = orig;
+      const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns });
       for (const line of lines) {
         const visible = vlen(line);
         assert.ok(
@@ -713,14 +688,9 @@ describe('line 3 width-adaptive rendering', () => {
   });
 
   test('no line 3 exceeds column width (invariant with extra usage enabled)', () => {
-    // Extra usage widens line 3 to 81 at full tier; test all tier boundaries.
     const widths = [20, 35, 55, 66, 67, 80, 81, 120];
     for (const columns of widths) {
-      const lines: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.join(' '));
-      render({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns });
-      console.log = orig;
+      const lines = renderLines({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns });
       for (const line of lines) {
         const visible = vlen(line);
         assert.ok(
@@ -739,11 +709,7 @@ describe('line 3 width-adaptive rendering', () => {
     };
     const widths = [20, 35, 55, 66, 67, 80, 81, 95, 120];
     for (const columns of widths) {
-      const lines: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.join(' '));
-      render({ stdin: baseStdin, usage: withGrant, git: null, now, columns });
-      console.log = orig;
+      const lines = renderLines({ stdin: baseStdin, usage: withGrant, git: null, now, columns });
       for (const line of lines) {
         const visible = vlen(line);
         assert.ok(
@@ -851,14 +817,7 @@ describe('height-adaptive edge cases', () => {
   test('rows=1 with API hint never exceeds column width', () => {
     const rateLimited: UsageData = { ...baseUsage, apiError: 'rate-limited' };
     for (const columns of [25, 35, 47, 80, 120]) {
-      const lines: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.join(' '));
-      try {
-        render({ stdin: baseStdin, usage: rateLimited, git: null, now, rows: 1, columns });
-      } finally {
-        console.log = orig;
-      }
+      const lines = renderLines({ stdin: baseStdin, usage: rateLimited, git: null, now, rows: 1, columns });
       const v = vlen(lines[0] ?? '');
       assert.ok(v <= columns, `rows=1 + ⟳ hint visible ${v} > ${columns}: "${lines[0]?.replace(/\x1b\[[0-9;]*m/g, '')}"`);
     }
@@ -866,11 +825,7 @@ describe('height-adaptive edge cases', () => {
 
   test('rows=2 appends rate-limited indicator to the merged quota line', () => {
     const rateLimited: UsageData = { ...baseUsage, apiError: 'rate-limited' };
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    render({ stdin: baseStdin, usage: rateLimited, git: null, now, rows: 2 });
-    console.log = orig;
+    const lines = renderLines({ stdin: baseStdin, usage: rateLimited, git: null, now, rows: 2 });
     assert.equal(lines.length, 2, 'should produce exactly 2 lines');
     const line2 = lines[1]?.replace(/\x1b\[[0-9;]*m/g, '') ?? '';
     assert.ok(line2.includes('⟳'), 'rate-limited indicator must be on line 2 at rows=2');
@@ -891,14 +846,7 @@ describe('height-adaptive edge cases', () => {
       120,
     ];
     for (const columns of widths) {
-      const lines: string[] = [];
-      const orig = console.log;
-      console.log = (...args: unknown[]) => lines.push(args.join(' '));
-      try {
-        render({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2, columns });
-      } finally {
-        console.log = orig;
-      }
+      const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: null, now, rows: 2, columns });
       for (const line of lines) {
         const visible = vlen(line);
         assert.ok(
@@ -926,17 +874,11 @@ describe('height-adaptive edge cases', () => {
       planName: 'Max', // 3 chars → col0Width = max(4, 3) = 4 < 6 (fetch-time width)
       fetchedAt: now,
     };
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    try {
-      assert.doesNotThrow(
-        () => render({ stdin: shortStdin, usage, git: null, now, rows: 3 }),
-        'render must not throw RangeError when col0Width < fetch-time length',
-      );
-    } finally {
-      console.log = orig;
-    }
+    let lines: string[] = [];
+    assert.doesNotThrow(
+      () => { lines = renderLines({ stdin: shortStdin, usage, git: null, now, rows: 3 }); },
+      'render must not throw RangeError when col0Width < fetch-time length',
+    );
     // Sanity: 3 lines should still be produced.
     assert.equal(lines.length, 3, 'expected three lines at rows=3');
   });
@@ -948,11 +890,7 @@ describe('height-adaptive edge cases', () => {
     const widths = [35, 55, 67, 81, 95, 120];
     for (const columns of widths) {
       for (const rows of [2, 3] as const) {
-        const lines: string[] = [];
-        const orig = console.log;
-        console.log = (...args: unknown[]) => lines.push(args.join(' '));
-        render({ stdin: baseStdin, usage: rateLimited, git: null, now, columns, rows });
-        console.log = orig;
+        const lines = renderLines({ stdin: baseStdin, usage: rateLimited, git: null, now, columns, rows });
         for (const line of lines) {
           const visible = vlen(line);
           assert.ok(
