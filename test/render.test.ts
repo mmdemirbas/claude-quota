@@ -22,8 +22,13 @@ function capture(input: Omit<RenderInput, 'now'> & { now?: number }): { line1: s
   const lines: string[] = [];
   const orig = console.log;
   console.log = (...args: unknown[]) => lines.push(args.join(' '));
-  render(input);
-  console.log = orig;
+  // try/finally so a render() throw cannot leave console.log patched and
+  // contaminate every subsequent test in the suite.
+  try {
+    render(input);
+  } finally {
+    console.log = orig;
+  }
   const stripped = lines.map(strip);
   return { line1: stripped[0] ?? '', line2: stripped[1] ?? '', line3: stripped[2] ?? '', full: stripped.join('\n') };
 }
