@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as https from 'node:https';
+import { StringDecoder } from 'node:string_decoder';
+import type { ClientRequest, IncomingMessage } from 'node:http';
 import type {
   UsageApiResponse, UsageData, ExtraUsageData, CacheFile, ApiError,
   ProfileApiResponse, CreditGrantApiResponse, ProfileCacheFile, CreditGrantCacheFile,
@@ -187,6 +189,43 @@ function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile
 const MAX_RESPONSE_BODY = 1_048_576; // 1 MB guard
 const MIN_TLS_VERSION = 'TLSv1.2' as const;
 
+/**
+ * Collect a response body up to MAX_RESPONSE_BODY bytes.
+ *
+ * Uses StringDecoder so a multi-byte UTF-8 character split across two
+ * chunks does not become a U+FFFD replacement. Calls req.destroy() when
+ * the cap is reached so the connection stops downloading bytes the
+ * caller will never read; without this the previous pre-append guard
+ * silently kept the socket draining for whatever the server still had
+ * queued.
+ *
+ * Returns { body, overflowed }: when overflowed is true, the caller
+ * should treat the body as malformed (it was truncated mid-stream).
+ */
+function collectBody(req: ClientRequest, res: IncomingMessage): Promise<{ body: string; overflowed: boolean }> {
+  return new Promise((resolve) => {
+    const decoder = new StringDecoder('utf8');
+    let body = '';
+    let bytes = 0;
+    let overflowed = false;
+    res.on('data', (c: Buffer) => {
+      if (overflowed) return;
+      bytes += c.length;
+      if (bytes > MAX_RESPONSE_BODY) {
+        overflowed = true;
+        req.destroy();
+        return;
+      }
+      body += decoder.write(c);
+    });
+    res.on('end', () => {
+      if (!overflowed) body += decoder.end();
+      resolve({ body, overflowed });
+    });
+    res.on('error', () => resolve({ body, overflowed }));
+  });
+}
+
 function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null; error?: ApiError; retryAfterSec?: number }> {
   return new Promise((resolve) => {
     const req = https.request({
@@ -201,11 +240,11 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
       minVersion: MIN_TLS_VERSION,
       timeout: API_TIMEOUT_MS,
     }, (res) => {
-      let body = '';
-      res.on('data', (c: Buffer) => {
-        if (body.length < MAX_RESPONSE_BODY) body += c.toString();
-      });
-      res.on('end', () => {
+      void collectBody(req, res).then(({ body, overflowed }) => {
+        if (overflowed) {
+          resolve({ data: null, error: 'parse' });
+          return;
+        }
         if (res.statusCode !== 200) {
           const code = res.statusCode ?? 0;
           const error: ApiError = code === 429 ? 'rate-limited' : `http-${code}`;
@@ -374,12 +413,8 @@ function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | null> {
       minVersion: MIN_TLS_VERSION,
       timeout: API_TIMEOUT_MS,
     }, (res) => {
-      let body = '';
-      res.on('data', (c: Buffer) => {
-        if (body.length < MAX_RESPONSE_BODY) body += c.toString();
-      });
-      res.on('end', () => {
-        if (res.statusCode !== 200) { resolve(null); return; }
+      void collectBody(req, res).then(({ body, overflowed }) => {
+        if (overflowed || res.statusCode !== 200) { resolve(null); return; }
         try { resolve(JSON.parse(body) as T); }
         catch { resolve(null); }
       });
