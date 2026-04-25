@@ -508,9 +508,12 @@ export function render(input: RenderInput): void {
   const planText  = (usage?.planName ?? '').toLowerCase();
   const col0Width = Math.max(modelText.length, planText.length);
 
-  // Pad visible text to col0Width; ANSI color goes around the unpadded text, spaces follow
+  // Pad visible text to col0Width; ANSI color goes around the unpadded text, spaces follow.
+  // Math.max guards the case where text is wider than col0Width — happens on line 3
+  // when the fetch-time stamp (⟳HH:MM, 6 chars) exceeds short model+plan names
+  // like "opus" + "Max" (col0Width=4). Without the clamp, ' '.repeat would throw RangeError.
   const pad0 = (text: string, color: string) =>
-    `${color}${text}${R}${' '.repeat(col0Width - text.length)}`;
+    `${color}${text}${R}${' '.repeat(Math.max(0, col0Width - text.length))}`;
 
   // ── Line 1 ────────────────────────────────────────────────────────────────
   const ctxPct = getContextPercent(stdin);

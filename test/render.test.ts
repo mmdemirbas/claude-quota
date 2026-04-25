@@ -804,6 +804,38 @@ describe('height-adaptive edge cases', () => {
     }
   });
 
+  // Regression: pad0 used to do ' '.repeat(col0Width - text.length) without
+  // clamping to 0. When the model display ("opus") and plan ("Max") were both
+  // shorter than the 6-char fetchTime stamp, line 3 attempted ' '.repeat(-2)
+  // and threw RangeError — caught by main()'s try/catch, so the user saw an
+  // empty statusline.
+  test('does not crash when col0Width is shorter than the fetch-time stamp', () => {
+    const shortStdin = {
+      model: { display_name: 'Claude Opus 4.6' }, // family "opus" = 4 chars
+      // no effort_level — keeps modelText at 4 chars
+      context_window: { current_usage: { input_tokens: 40_000 }, context_window_size: 200_000 },
+      cwd: '/home/user/p',
+    };
+    const usage: UsageData = {
+      ...baseUsage,
+      planName: 'Max', // 3 chars → col0Width = max(4, 3) = 4 < 6 (fetch-time width)
+      fetchedAt: now,
+    };
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => lines.push(args.join(' '));
+    try {
+      assert.doesNotThrow(
+        () => render({ stdin: shortStdin, usage, git: null, now, rows: 3 }),
+        'render must not throw RangeError when col0Width < fetch-time length',
+      );
+    } finally {
+      console.log = orig;
+    }
+    // Sanity: 3 lines should still be produced.
+    assert.equal(lines.length, 3, 'expected three lines at rows=3');
+  });
+
   test('rate-limited indicator never pushes any line past the terminal width', () => {
     // Before the syncHint fix, fitLine sized the line to `cols` and then
     // syncHint (' ⟳', 2 visible chars) was appended — causing overflow.
