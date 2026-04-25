@@ -322,9 +322,17 @@ export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsag
 
 /**
  * Bump the cache timestamp without changing data.
- * Prevents parallel instances from all fetching at the same time.
+ *
+ * Prevents parallel instances from all fetching at the same time:
+ * downstream readers see a fresh timestamp (so age < TTL) and serve
+ * the cached value instead of triggering their own fetch.
+ *
+ * Exported so the parent process can bump *before* spawning the
+ * detached background refresher — closing the window where a third
+ * parallel instance could read the still-stale cache, also flag it
+ * stale, and spawn a duplicate refresher.
  */
-function bumpCacheTimestamp(now: number): void {
+export function bumpCacheTimestamp(now: number = Date.now()): void {
   try {
     const raw = readJsCache(getCachePath());
     if (!raw) return;

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readStdin } from './stdin.js';
-import { getUsage, getCreditGrant } from './usage.js';
+import { getUsage, getCreditGrant, bumpCacheTimestamp } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
@@ -61,7 +61,14 @@ async function main(): Promise<void> {
       usage.extraUsage = { ...usage.extraUsage, creditGrant };
     }
 
-    if (isStale) spawnBackgroundRefresh(scriptPath);
+    if (isStale) {
+      // Bump before spawning so a third parallel instance landing between
+      // here and the child's own bump sees a fresh-looking cache and skips
+      // the redundant refresh. The child still bumps inside getUsage —
+      // double-bump is cheap (a single small file write).
+      bumpCacheTimestamp();
+      spawnBackgroundRefresh(scriptPath);
+    }
 
     const { columns, rows } = terminalDims(stdin);
     render({ stdin, usage, git, columns, rows });
