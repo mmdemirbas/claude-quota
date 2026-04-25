@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readStdin } from './stdin.js';
-import { getUsage, getCreditGrant, bumpCacheTimestamp } from './usage.js';
+import { getUsage, getCreditGrant, bumpCacheTimestamp, ensureProfileCached } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
@@ -49,6 +49,14 @@ async function main(): Promise<void> {
       console.log('[claude-quota] Ready. Restart Claude Code to activate.');
       return;
     }
+
+    // Warm the profile cache before getUsage / getCreditGrant fan out.
+    // Fast on cache hit (a single 0o600 file read); cold path costs one
+    // /api/oauth/profile RTT once a day. Pays back by letting getUsage's
+    // livePlanName see the live API tier on the very first render after
+    // a fresh install or a 24-hour profile-TTL expiry — otherwise that
+    // render shows a plan name derived from the stale credentials file.
+    await ensureProfileCached();
 
     const [{ data: usage, isStale }, git, creditGrant] = await Promise.all([
       getUsage(),

@@ -643,7 +643,35 @@ async function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | n
   catch { return null; }
 }
 
-// ── Credit grant public API ───────────────────────────────────────────────
+// ── Profile + credit grant public API ─────────────────────────────────────
+
+/**
+ * Make sure the profile cache is populated before code that depends on
+ * it runs. Fast path: profile cache hit returns immediately. Cold path:
+ * one /api/oauth/profile fetch then write to the profile cache.
+ *
+ * This exists so the parent process can sequence a profile-cache warm
+ * up *before* getUsage's livePlanName runs in parallel — without it,
+ * the first render after a fresh install or a 24-hour profile-TTL
+ * expiry shows a plan name derived from the (potentially stale)
+ * credentials file instead of the live API tier.
+ */
+export async function ensureProfileCached(): Promise<void> {
+  const now = Date.now();
+  if (readProfileCache(now)) return;
+
+  const creds = readCredentials(now);
+  if (!creds) return;
+
+  const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
+  const uuid = profile?.organization?.uuid;
+  if (!uuid) return;
+  writeProfileCache({
+    orgUUID: uuid,
+    rateLimitTier: profile.organization?.rate_limit_tier,
+    organizationType: profile.organization?.organization_type,
+  }, now);
+}
 
 /**
  * Fetch the prepaid credit grant balance.
@@ -675,7 +703,9 @@ export async function getCreditGrant(): Promise<number | null> {
     const creds = readCredentials(now);
     if (!creds) return null;
 
-    // Get org UUID (from cache or profile API)
+    // Get org UUID (from cache or profile API). May have already been
+    // populated by ensureProfileCached() running ahead of us in
+    // index.ts; cache hit is the common case.
     let profileData = readProfileCache(now);
     if (!profileData) {
       const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
