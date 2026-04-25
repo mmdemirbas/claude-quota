@@ -419,6 +419,10 @@ function getFetchLockPath(): string {
   return path.join(pluginDir(), '.fetch.lock');
 }
 
+function getCreditGrantLockPath(): string {
+  return path.join(pluginDir(), '.credit-grant.lock');
+}
+
 /**
  * Try to acquire the fetch lock. Returns a handle on success (callers
  * MUST release it via releaseFetchLock once the fetch completes); null
@@ -579,38 +583,55 @@ export async function getCreditGrant(): Promise<number | null> {
   const cached = readCreditGrantCache(now);
   if (cached) return cached.value;
 
-  // Need credentials for API calls
-  const creds = readCredentials(now);
-  if (!creds) return null;
-
-  // Get org UUID (from cache or profile API)
-  let profileData = readProfileCache(now);
-  if (!profileData) {
-    const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
-    const uuid = profile?.organization?.uuid;
-    if (!uuid) return null;
-    profileData = {
-      orgUUID: uuid,
-      rateLimitTier: profile?.organization?.rate_limit_tier,
-      organizationType: profile?.organization?.organization_type,
-    };
-    writeProfileCache(profileData, now);
+  // Cold path: about to hit /api/oauth/profile and/or
+  // /api/oauth/organizations/.../overage_credit_grant. Acquire a
+  // dedicated lock so N parallel claude-quota processes don't
+  // fan out to N profile + N grant calls — the same thundering-
+  // herd that the usage-fetch lock guards against.
+  const lock = acquireFetchLock(now, getCreditGrantLockPath());
+  if (!lock) {
+    // Peer is already fetching. Re-check the cache: if its write
+    // landed between our miss above and the lock check, serve it.
+    const recheck = readCreditGrantCache(now);
+    return recheck ? recheck.value : null;
   }
 
-  // Fetch credit grant
-  const grant = await fetchJson<CreditGrantApiResponse>(
-    `/api/oauth/organizations/${encodeURIComponent(profileData.orgUUID)}/overage_credit_grant`,
-    creds.accessToken,
-  );
-  if (!grant || !grant.granted || grant.amount_minor_units == null) {
-    writeCreditGrantCache(null, now);
-    return null;
-  }
+  try {
+    // Need credentials for API calls
+    const creds = readCredentials(now);
+    if (!creds) return null;
 
-  // Convert cents to dollars
-  const dollars = grant.amount_minor_units / 100;
-  writeCreditGrantCache(dollars, now);
-  return dollars;
+    // Get org UUID (from cache or profile API)
+    let profileData = readProfileCache(now);
+    if (!profileData) {
+      const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
+      const uuid = profile?.organization?.uuid;
+      if (!uuid) return null;
+      profileData = {
+        orgUUID: uuid,
+        rateLimitTier: profile?.organization?.rate_limit_tier,
+        organizationType: profile?.organization?.organization_type,
+      };
+      writeProfileCache(profileData, now);
+    }
+
+    // Fetch credit grant
+    const grant = await fetchJson<CreditGrantApiResponse>(
+      `/api/oauth/organizations/${encodeURIComponent(profileData.orgUUID)}/overage_credit_grant`,
+      creds.accessToken,
+    );
+    if (!grant || !grant.granted || grant.amount_minor_units == null) {
+      writeCreditGrantCache(null, now);
+      return null;
+    }
+
+    // Convert cents to dollars
+    const dollars = grant.amount_minor_units / 100;
+    writeCreditGrantCache(dollars, now);
+    return dollars;
+  } finally {
+    lock.release();
+  }
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
