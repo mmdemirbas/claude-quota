@@ -634,7 +634,13 @@ export async function getCreditGrant(): Promise<number | null> {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ data: UsageData | null; isStale: boolean }> {
+/**
+ * Test seam: callers can inject a fake fetcher for integration tests
+ * without spinning up an HTTP server. Production callers omit it.
+ */
+export type FetchApiFn = typeof fetchApi;
+
+export async function getUsage(opts?: { forceRefresh?: boolean; fetcher?: FetchApiFn }): Promise<{ data: UsageData | null; isStale: boolean }> {
   const now = Date.now();
 
   // Derive plan name from profile cache (live API tier) → credentials (bootstrap fallback).
@@ -713,7 +719,7 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
 
   let result;
   try {
-    result = await fetchApi(creds.accessToken);
+    result = await (opts?.fetcher ?? fetchApi)(creds.accessToken);
   } finally {
     lock.release();
   }
