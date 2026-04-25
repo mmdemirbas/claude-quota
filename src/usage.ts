@@ -261,19 +261,46 @@ function collectBody(req: ClientRequest, res: IncomingMessage): Promise<{ body: 
   });
 }
 
-function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null; error?: ApiError; retryAfterSec?: number }> {
+/**
+ * Outcome of an HTTP exchange before per-endpoint interpretation. The
+ * shared request helper resolves to one of these; each fetcher then
+ * casts the body to its specific JSON shape (or applies its own
+ * status-code semantics).
+ */
+type RequestOutcome =
+  | { kind: 'ok'; body: string }
+  | { kind: 'overflow' }                                  // body exceeded MAX_RESPONSE_BODY
+  | { kind: 'http'; statusCode: number; headers: IncomingMessage['headers'] }
+  | { kind: 'network' }
+  | { kind: 'timeout' };
+
+/**
+ * Issue a GET to api.anthropic.com and resolve once one of:
+ *   - response received with statusCode === 200 → kind: 'ok'
+ *   - response received with non-2xx           → kind: 'http'
+ *   - body overflowed MAX_RESPONSE_BODY        → kind: 'overflow'
+ *   - socket error                             → kind: 'network'
+ *   - per-activity OR absolute deadline tripped → kind: 'timeout'
+ *
+ * The absolute deadline is essential for slow-loris tolerance:
+ * `req.timeout` is per-activity, so a server that trickles bytes slower
+ * than the interval can hold the connection open indefinitely. The
+ * setTimeout below destroys the request after API_TIMEOUT_MS regardless.
+ */
+function requestApi(urlPath: string, accessToken: string): Promise<RequestOutcome> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (v: { data: UsageApiResponse | null; error?: ApiError; retryAfterSec?: number }): void => {
+    let deadline: NodeJS.Timeout | undefined;
+    const finish = (v: RequestOutcome): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(deadline);
+      if (deadline) clearTimeout(deadline);
       resolve(v);
     };
 
     const req = https.request({
       hostname: 'api.anthropic.com',
-      path: '/api/oauth/usage',
+      path: urlPath,
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
@@ -284,42 +311,42 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
       timeout: API_TIMEOUT_MS,
     }, (res) => {
       void collectBody(req, res).then(({ body, overflowed }) => {
-        if (overflowed) {
-          finish({ data: null, error: 'parse' });
-          return;
-        }
-        if (res.statusCode !== 200) {
-          const code = res.statusCode ?? 0;
-          const error: ApiError = code === 429 ? 'rate-limited' : `http-${code}`;
-          const retryRaw = res.headers['retry-after'];
-          const retryVal = Array.isArray(retryRaw) ? retryRaw[0] : retryRaw;
-          const retryAfterSec = parseRetryAfter(retryVal, Date.now());
-          // Surface auth failures distinctly so a revoked or rotated token
-          // does not present as a generic "API down". 429 stays quiet —
-          // rate-limits are handled with UI backoff, not warnings.
-          if (code === 401 || code === 403) {
-            warn('usage API auth failed', { code });
-          }
-          finish({ data: null, error, retryAfterSec });
-          return;
-        }
-        try {
-          finish({ data: JSON.parse(body) as UsageApiResponse });
-        } catch {
-          finish({ data: null, error: 'parse' });
-        }
+        if (overflowed) { finish({ kind: 'overflow' }); return; }
+        if (res.statusCode === 200) { finish({ kind: 'ok', body }); return; }
+        finish({ kind: 'http', statusCode: res.statusCode ?? 0, headers: res.headers });
       });
     });
 
-    req.on('error', () => finish({ data: null, error: 'network' }));
-    req.on('timeout', () => { req.destroy(); finish({ data: null, error: 'timeout' }); });
-    // req.timeout above is per-activity. A server that trickles bytes
-    // slower than that interval can hold the connection open
-    // indefinitely; this absolute deadline destroys the request after
-    // API_TIMEOUT_MS regardless of whether bytes are still flowing.
-    const deadline = setTimeout(() => { req.destroy(); finish({ data: null, error: 'timeout' }); }, API_TIMEOUT_MS);
+    req.on('error', () => finish({ kind: 'network' }));
+    req.on('timeout', () => { req.destroy(); finish({ kind: 'timeout' }); });
+    deadline = setTimeout(() => { req.destroy(); finish({ kind: 'timeout' }); }, API_TIMEOUT_MS);
     req.end();
   });
+}
+
+async function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null; error?: ApiError; retryAfterSec?: number }> {
+  const outcome = await requestApi('/api/oauth/usage', accessToken);
+  switch (outcome.kind) {
+    case 'ok': {
+      try { return { data: JSON.parse(outcome.body) as UsageApiResponse }; }
+      catch { return { data: null, error: 'parse' }; }
+    }
+    case 'overflow': return { data: null, error: 'parse' };
+    case 'network':  return { data: null, error: 'network' };
+    case 'timeout':  return { data: null, error: 'timeout' };
+    case 'http': {
+      const code = outcome.statusCode;
+      const error: ApiError = code === 429 ? 'rate-limited' : `http-${code}`;
+      const retryRaw = outcome.headers['retry-after'];
+      const retryVal = Array.isArray(retryRaw) ? retryRaw[0] : retryRaw;
+      const retryAfterSec = parseRetryAfter(retryVal, Date.now());
+      // Surface auth failures distinctly so a revoked or rotated token
+      // does not present as a generic "API down". 429 stays quiet —
+      // rate-limits are handled with UI backoff, not warnings.
+      if (code === 401 || code === 403) warn('usage API auth failed', { code });
+      return { data: null, error, retryAfterSec };
+    }
+  }
 }
 
 // ── Parsing ────────────────────────────────────────────────────────────────
@@ -590,40 +617,11 @@ function writeCreditGrantCache(creditGrant: number | null, timestamp: number): v
 
 // ── Generic HTTPS JSON GET ────────────────────────────────────────────────
 
-function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | null> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: T | null): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(deadline);
-      resolve(v);
-    };
-
-    const req = https.request({
-      hostname: 'api.anthropic.com',
-      path: urlPath,
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': 'claude-quota/0.2',
-      },
-      minVersion: MIN_TLS_VERSION,
-      timeout: API_TIMEOUT_MS,
-    }, (res) => {
-      void collectBody(req, res).then(({ body, overflowed }) => {
-        if (overflowed || res.statusCode !== 200) { finish(null); return; }
-        try { finish(JSON.parse(body) as T); }
-        catch { finish(null); }
-      });
-    });
-    req.on('error', () => finish(null));
-    req.on('timeout', () => { req.destroy(); finish(null); });
-    // Absolute deadline (see fetchApi for rationale).
-    const deadline = setTimeout(() => { req.destroy(); finish(null); }, API_TIMEOUT_MS);
-    req.end();
-  });
+async function fetchJson<T>(urlPath: string, accessToken: string): Promise<T | null> {
+  const outcome = await requestApi(urlPath, accessToken);
+  if (outcome.kind !== 'ok') return null;
+  try { return JSON.parse(outcome.body) as T; }
+  catch { return null; }
 }
 
 // ── Credit grant public API ───────────────────────────────────────────────
