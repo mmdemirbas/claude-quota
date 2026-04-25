@@ -172,4 +172,25 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
     await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: goodResponse }, calls) });
     assert.equal(calls.count, 2, 'forceRefresh must bypass the cache');
   });
+
+  // ── ANTHROPIC_BASE_URL is honoured but does not block the fetch ───────────
+  //
+  // A user routing Claude Code through a local token-rewriting proxy
+  // (RTK at http://127.0.0.1:3457, or a self-hosted gateway) used to see
+  // an empty plan/quota line because getUsage short-circuited. The
+  // request itself targets api.anthropic.com directly via api.ts, so
+  // setting ANTHROPIC_BASE_URL must not prevent the call.
+  test('non-anthropic ANTHROPIC_BASE_URL does not block the fetch', async () => {
+    const restore = process.env.ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:3457';
+    try {
+      const calls = { count: 0 };
+      const result = await getUsage({ fetcher: makeFetcher({ data: goodResponse }, calls) });
+      assert.equal(calls.count, 1, 'fetcher must run despite a non-anthropic base URL');
+      assert.equal(result.data?.fiveHour, 25);
+    } finally {
+      if (restore === undefined) delete process.env.ANTHROPIC_BASE_URL;
+      else process.env.ANTHROPIC_BASE_URL = restore;
+    }
+  });
 });

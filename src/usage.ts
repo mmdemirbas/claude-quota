@@ -79,15 +79,13 @@ export async function getUsage(opts?: { forceRefresh?: boolean; fetcher?: FetchA
 
   const none = { data: null, isStale: false } as const;
 
-  // Skip fetching if using a non-Anthropic API endpoint
-  const baseUrl = (process.env.ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_API_BASE_URL ?? '').trim();
-  if (baseUrl) {
-    try {
-      if (new URL(baseUrl).origin !== 'https://api.anthropic.com') return none;
-    } catch { return none; }
-  }
-
-  // Read credentials
+  // ANTHROPIC_BASE_URL is intentionally ignored. Even when a user routes
+  // Claude Code through a token-rewriting proxy (RTK) or a self-hosted
+  // gateway, the OAuth usage/profile endpoints are tied to anthropic.com
+  // and our request helper goes there directly (see api.ts). Users on a
+  // truly non-anthropic backend (Bedrock-only, etc.) will simply have no
+  // Claude OAuth token in the keychain — readCredentials returns null
+  // below and we noop.
   const creds = readCredentials(now);
   if (!creds) return none;
 
