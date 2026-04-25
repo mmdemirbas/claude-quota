@@ -1,376 +1,379 @@
-# Deep review — claude-quota
+# Deep review — claude-quota (round 3)
 
-Date: 2026-04-25
-Scope: full source tree at HEAD (post-iteration-2). 292 tests pass.
+Date: 2026-04-25 (post-iteration-3, all 12 round-2 findings landed).
+Scope: full source tree at HEAD. 304 tests pass, build clean.
 Lenses: correctness, security, performance, reliability, architecture,
-test quality, UX consistency, API contract.
+test quality, UX consistency, ABI stability.
 
-This document lists findings only. None are crisis-level — the codebase
-is in good shape after the last two iterations. Items are prioritised
-within each lens; a cross-lens severity summary closes the document.
+The codebase has matured substantially across the last two iterations.
+This pass surfaced no critical or high-severity issues. The findings
+below are sub-percent improvements over the current quality bar; most
+are defensive rather than corrective.
 
 ---
 
 ## 1. Correctness
 
-### C1. `fetchStartedAt` is now vestigial coordination — usage.ts:152, 194, 380
+### C1. Lock-release identity race — usage.ts:482
 
-`bumpCacheTimestamp` writes `fetchStartedAt`; `readCache` checks it
-against `FETCH_COORDINATION_MS` to force-fetch if a prior writer died
-mid-flight. Since RateLimit-1 added an O_EXCL lock file with the same
-stale-reclaim semantics, both mechanisms now solve the same problem.
-
-The bump still has an independent purpose: it shortens `age` on the
-cache so peer instances don't see `isStale` and spawn redundant
-background refreshers. But the `fetchStartedAt` field itself is dead
-weight — its only consumer is the death-detection branch in readCache,
-which the lock supersedes.
-
-**Action**: drop `fetchStartedAt` from `CacheFile`, the bump function,
-and the readCache death-detection branch. Keep the timestamp bump for
-its anti-spawn effect.
-
-### C2. `parseExtraUsage` returns disabled-state with placeholder zeros — usage.ts:336
+`release()` does `fs.unlinkSync(lockPath)` without verifying the file
+on disk is still ours:
 
 ```ts
-if (!raw.is_enabled) return { enabled: false, monthlyLimit: 0, usedCredits: 0, creditGrant: null };
+return {
+  release: () => {
+    try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+  },
+};
 ```
 
-The renderer guards this with `if (!enabled)` and never divides, so
-`0/0` never happens. But the shape is misleading: a future caller that
-forgets the guard would compute `usedPct = (0 / 0) * 100 = NaN`. Cleaner:
-return `{ enabled: false }` and tighten the type so `monthlyLimit` /
-`usedCredits` are only present when enabled.
+Failure mode (rare, narrow):
 
-Cost: small type-system shuffle. Not urgent.
+1. We acquire the lock at t=0, write our PID, close.
+2. Our `await fetchApi` runs; meanwhile the process is suspended (laptop
+   lid close, heavy GC, OS scheduler delay).
+3. At t ≥ FETCH_COORDINATION_MS (20 s), peer B sees the stale mtime,
+   reclaims, creates its own lock.
+4. At t ≈ 20.5 s, our fetch returns, `release()` runs, and we
+   `unlinkSync(lockPath)` — which deletes B's lock, not ours.
+
+Margin to bound this: API_TIMEOUT_MS (15 s) leaves a 5-s window before
+FETCH_COORDINATION_MS (20 s). Any mid-fetch suspension > 5 s trips the
+race. Real-world frequency: low. Real-world impact: another peer can
+then steal the orphaned lock, which means at most two near-simultaneous
+fetches — the very thing the lock was supposed to prevent, but only at
+roughly 1/N of the fan-out the un-locked code allowed.
+
+**Fix**: write a UUID (or `process.pid` + a random nonce) at acquire,
+read it back at release, and only unlink when the contents match.
+That tightens the race to a TOCTOU window of microseconds.
+
+```ts
+const token = `${process.pid}.${randomBytes(8).toString('hex')}`;
+fs.writeSync(fd, token);
+…
+return {
+  release: () => {
+    try {
+      const onDisk = fs.readFileSync(lockPath, 'utf8');
+      if (onDisk === token) fs.unlinkSync(lockPath);
+    } catch { /* gone — fine */ }
+  },
+};
+```
+
+### C2. fetchApi `deadline` referenced before initialisation — usage.ts:269, 319
+
+```ts
+const finish = (v) => {
+  if (settled) return;
+  settled = true;
+  clearTimeout(deadline);   // referenced here
+  resolve(v);
+};
+…
+req.on('error', () => finish({…}));
+req.on('timeout', () => { req.destroy(); finish({…}); });
+const deadline = setTimeout(…);   // declared here
+req.end();
+```
+
+Runtime-safe: every code path that calls `finish` runs after `deadline`
+is initialised (Node delivers `req.on(*)` events asynchronously, and
+`req.end()` is the last synchronous statement). But the closure
+references a `const` in its TDZ from the perspective of the source
+order, which fails to reflect intent.
+
+**Fix**: declare with `let deadline: NodeJS.Timeout | undefined` before
+`finish`, assign after the listeners. Cosmetic; clarifies the
+intentional late-binding.
+
+### C3. Retry-After parsing only handles integer seconds — usage.ts:295
+
+```ts
+const retryAfterSec = retryVal ? parseInt(retryVal, 10) || undefined : undefined;
+```
+
+RFC 7231 allows `Retry-After` to be either an integer-seconds value or
+an HTTP-date (`Wed, 21 Oct 2015 07:28:00 GMT`). The current code returns
+`undefined` for the date form, then falls back to count-derived
+jittered backoff. That's not wrong — backoff still applies — but the
+server's hint about when to actually retry is silently ignored.
+
+**Fix**: try `parseInt`; if `NaN`, try `Date.parse`; if valid, compute
+seconds-from-now. Two-line addition; correctness improvement.
 
 ---
 
 ## 2. Security
 
-### S1. Lock file mode depends on umask — usage.ts:436
+(No findings worth landing.)
 
-`fs.openSync(path, O_WRONLY | O_CREAT | O_EXCL, 0o600)` applies
-`0o600 & ~umask`. In every realistic umask the result is `0o600`, but
-`writeFileSecure` belts and suspenders this with an explicit chmod
-after open. The lock file does not.
-
-Risk is theoretical (the plugin dir lives under the user's `~/.claude/`
-which is itself user-owned), but consistency matters.
-
-**Action**: `fs.fchmodSync(fd, 0o600)` immediately after `openSync`,
-before writing the PID.
-
-### S2. No PID-identity check on stale-lock reclaim — usage.ts:444-454
-
-When we reclaim a stale lock we trust that the on-disk lock is in fact
-stale, then unlink + re-create. Between unlink and the second
-`tryCreate`, a peer could win — that case is handled (we get null and
-yield). But there's no verification that the lock we're unlinking is
-the same one we lstat'd: a peer could have released and a new lock been
-created in between (with fresh mtime). We'd unlink the new lock.
-
-In practice this race is sub-microsecond and limited to the case where
-the previous holder *just* died. The blast radius is "we accidentally
-helped the next holder hold their lock through one full
-FETCH_COORDINATION_MS without contention" — which is harmless. Noting
-for completeness; not worth fixing.
+The TLS trust model is documented inline. Cache files are 0o600.
+Lock files now go through `fchmodSync` belt-and-suspenders. OAuth
+token is CRLF-stripped before headers. Plugin dir is user-owned.
+Pre-existing comments cover the model thoroughly.
 
 ---
 
 ## 3. Performance
 
-### P1. `Buffer.byteLength(DASHBOARD_HTML, 'utf8')` recomputed per tick — dashboard.ts:33
+### P1. fetchApi / fetchJson duplicate ~50 lines of HTTP+deadline boilerplate — usage.ts:263, 538
 
-The HTML is build-pinned, so its byte length is a constant. The `Perf-2`
-optimisation runs the encoder over ~25 KB on every tick to compute a
-value that never changes within a process. Lift it to a module-level
-const.
+Each function:
 
-Tiny. Order of magnitude: tens of microseconds, ~1× per tick. Worth it
-because it's free.
+- Declares `settled` + `finish`
+- Builds the same `https.request(…)` options with the same headers
+- Wires the same three error/timeout/deadline listeners
+- Differs only in the response body handling
 
-### P2. `getCreditGrant` has no fetch lock — usage.ts:549
+Two separate places to keep in sync when adding TLS pinning, retries,
+or telemetry. A `requestJson<T>(urlPath, accessToken, statusHandler)`
+helper that takes a callback for the status-non-200 branch would
+collapse this without changing behaviour.
 
-The cross-instance lock added in RateLimit-1 covers `fetchApi` only.
-`getCreditGrant` makes its own profile + grant fetches. On a cold
-start with N parallel Claude windows, all N hit `/api/oauth/profile`
-and `/api/oauth/organizations/.../overage_credit_grant` simultaneously.
+Net win: ~30 LOC removed, one place to maintain. Not urgent.
 
-The TTLs (24 h profile, 10 min / 24 h grant) make this rare in steady
-state, but the same trap (rate-limit if many windows open after
-upgrade) applies. Symmetry says the credit-grant path should also go
-through `acquireFetchLock`.
+### P2. `Buffer.byteLength(DASHBOARD_HTML)` — already addressed, kept as a const ✓
 
-**Action**: factor the lock acquisition into a helper and apply it to
-`getCreditGrant` too. Falling back to the cache (or returning null) on
-contention is the same yield strategy.
+### P3. Lock+bump pair on the cold path — informational
 
-### P3. Tick I/O budget — informational, no action
+Cold path now performs:
 
-Hot path on a cache hit (counted from `main()`):
+1. `acquireFetchLock` (open + fchmod + write + close, ~4 syscalls)
+2. `bumpCacheTimestamp` (read + parse + write of data.js, 2-3 syscalls)
+3. `await fetchApi`
+4. `lock.release()` (unlink, 1 syscall)
+5. `writeCache` (writeFileSecure: open + write + fsync + chmod + rename)
 
-| op | cost |
-|---|---|
-| readStdin | microseconds (already-buffered pipe) |
-| readJsCache (data.js) | 1 lstat + 1 read |
-| readProfileCache | 1 lstat + 1 read |
-| readCreditGrantCache | 1 lstat + 1 read |
-| getGitStatus | 2 git subprocess invocations |
-| ensureDashboardHtml | 1 stat |
-| render | no I/O |
+Each "syscall" is sub-millisecond on local disk. The bump is the most
+questionable now — its only role is to suppress redundant background
+spawns by other parents. The lock alone correctly serialises the
+fetch. Removing the bump would save one read+parse+write per cold
+path per process. The trade-off is more spawn churn under contention.
 
-Git subprocesses dominate at 10–30 ms each. Caching git state for ~1 s
-would skip ~95% of git invocations during sustained typing, but
-introduces lag on `git checkout`. Not an obvious win — leave as-is.
+Recommendation: leave as is. The bump's role is documented; cost is
+~1 ms; benefit is real (avoids ~50–100 ms of node startup × N parents).
 
 ---
 
 ## 4. Reliability
 
-### R1. Slow-loris tolerance — usage.ts:272, 528 (`req.timeout`)
+### R1. R1's deadline-timer fix has no test — usage.ts:319
 
-`https.request({ timeout: 15000 })` arms the **inactivity** timer:
-the socket emits `timeout` only if no bytes flow for 15 s. A server
-that trickles a single byte every 14 s never trips it. With our 1 MB
-body cap and `req.destroy()` on overflow we're bounded by memory, but
-the connection — and thus the awaiting Promise — can hang for arbitrarily
-long.
+The slow-loris deadline is a defensive change with no regression
+test. Future code that refactors `fetchApi` (e.g., the P1 dedup
+above) could quietly drop the deadline without the suite noticing.
 
-If `getUsage` hangs, the entire render is stuck behind `Promise.all` in
-`main()`. Claude Code's per-tick timeout (if any) is the only backstop.
+**Fix**: add a test using `http.createServer` that responds with one
+byte every (API_TIMEOUT_MS + small) seconds and assert that
+`fetchApi` resolves with `error: 'timeout'` within bounded time. The
+test already-imports `node:http` machinery in render.test.ts and
+getUsage.integration.test.ts, so cost is moderate.
 
-**Action**: wrap each request in an absolute-deadline timer:
+Alternative: mock `https.request` via a DI seam similar to the
+`fetcher` option on `getUsage`. Smaller blast radius but doesn't
+exercise the actual timeout plumbing.
+
+### R2. `getCreditGrant` populates the profile cache as a side-effect
+
+Cold path order in index.ts:
 
 ```ts
-const deadline = setTimeout(() => req.destroy(), API_TIMEOUT_MS);
-// clear in every resolve path
+Promise.all([
+  getUsage(),
+  …,
+  getCreditGrant(),
+])
 ```
 
-Alternatively: a single `setTimeout(() => abort(), API_TIMEOUT_MS)` in
-`fetchApi`/`fetchJson` that destroys the request. Cheap, defensive,
-makes the per-instance worst-case bounded.
+`getUsage` calls `livePlanName()`, which prefers the profile cache;
+if absent, falls back to credentials. `getCreditGrant` is what
+populates that cache (when it has to fetch profile). On a fresh
+install both run in parallel, so `getUsage` always sees the empty
+profile cache and falls back to credentials. The plan name from
+credentials may be stale after a plan upgrade until Claude Code
+refreshes the OAuth token.
 
-### R2. `getCreditGrant` cold path makes two serial network calls in the
-render's main `Promise.all` — usage.ts:563, 575
+Net impact: the *first* render after a plan upgrade may show the old
+plan name. After that, getCreditGrant has populated the cache, and
+subsequent renders are correct.
 
-Cache miss for both profile and grant: profile fetch, then (after that
-returns) grant fetch. Both share R1's slow-loris exposure. Compounds
-the worst-case delay.
+**Fix**: order `getCreditGrant` before `getUsage`, or have `getUsage`
+itself trigger the profile fetch when the profile cache is missing.
+Both are non-trivial; weigh against the rarity of the situation
+(plan upgrade is once per account).
 
-Mitigation overlaps with R1 — adding the per-request deadline timer
-bounds both calls. P2's lock would also gate the cold-start fanout to
-one instance.
-
-### R3. `lock.release()` on a forcibly-reclaimed lock — usage.ts:462
-
-If we hold the lock, take longer than `FETCH_COORDINATION_MS`, and a
-peer reclaims and acquires, our subsequent `release()` `unlink`s the
-peer's lock. Same micro-race as S2; same low blast radius.
-
-Not worth a code change; document the assumption that `fetchApi`
-returns within `FETCH_COORDINATION_MS` (it does — `API_TIMEOUT_MS` is
-15 s, coordination is 20 s, with 5 s slack).
+Could be left alone — it's a documented limitation with a self-
+healing recovery within ~10 min on subsequent renders.
 
 ---
 
 ## 5. Architecture
 
-### A1. usage.ts at 738 lines — usage.ts
+### A1. dashboard.ts JS body still uses `DATA` / `CREDIT_GRANT` literally — dashboard.ts:400, 422
 
-The file holds: TTL constants, on-disk cache codec, rehydrate helpers,
-backoff math, fetch-lock primitive, profile/credit-grant caching, two
-HTTP fetchers, schema parsing, the public `getUsage` and
-`getCreditGrant`. Each section is well-commented but the file is hard
-to navigate by name.
+A2 from the previous round wired the loader (top of LOADER block) to
+interpolate `${CACHE_VAR_DATA}` / `${CACHE_VAR_CREDIT_GRANT}`. The
+**body** of the JS — `renderDashboard()` and friends — still uses
+the hardcoded names:
 
-A pragmatic split (no API churn):
+```js
+function renderDashboard() {
+  if (!DATA || !DATA.data) return;
+  var raw = DATA.lastGoodData || DATA.data;
+  …
+}
+```
 
-- `usage/cache.ts` — readCache, writeCache, recoverCacheState, hydrate
-- `usage/api.ts` — collectBody, fetchApi, fetchJson, parsing
-- `usage/lock.ts` — acquireFetchLock, bumpCacheTimestamp, jitteredBackoff
-- `usage/profile.ts` — readProfileCache, writeProfileCache, getCreditGrant
-- `usage.ts` — re-exports + getUsage orchestration
+The pinning test added in A2 keeps the constants stable so the
+literals remain valid. This is documented; the divergence is a known
+trade-off (rewriting the JS body to interpolate every reference would
+hurt readability significantly).
 
-Not urgent. Split when the next feature lands here.
+Noted for future readers. No action.
 
-### A2. Cache-file ABI between usage.ts and dashboard.ts is undocumented
+### A2. Dashboard JS template: 350 lines of inline JS, no source maps
 
-`data.js` is `var DATA = <CacheFile>;` and `credit-grant.js` is
-`var CREDIT_GRANT = <CreditGrantCacheFile>;`. The dashboard's loader
-script imports both via `<script src>` and reads the globals. Changing
-the variable names or shape silently breaks the dashboard.
+`dashboard.ts` is 817 lines, ~70% of which is a CSS template + a JS
+template assembled via `${…}` into the HTML. The shipped output is a
+single file that the dashboard reloads on the user's browser. Debugging
+a runtime error in the dashboard means reading the rendered HTML in
+DevTools without source-map attribution.
 
-**Action**: extract a `CACHE_VAR_DATA = 'DATA'` const + a structural
-comment naming this as a load-bearing ABI. Or test it: a test that
-loads the dashboard JS in a vm and asserts the globals are present
-already exists for `_esc` (html-escape.test.ts) — extend or add a
-companion that pins `DATA`/`CREDIT_GRANT`.
+Pragmatic alternative: move the CSS and JS into separate `.ts` files
+exported as `const CSS = '…'` and `const JS = '…'` strings (manual
+templates), assembled by `dashboard.ts`. Same shipping shape; better
+in-IDE syntax highlighting and per-file size limits.
 
-### A3. `index.ts` calls `bumpCacheTimestamp` for the spawn-suppression
-side-effect, while `getUsage` calls it for the same side-effect — index.ts:69, usage.ts:667
+Bigger-still alternative: ship `dashboard.css` and `dashboard.js` as
+separate files written next to `dashboard.html`. Removes the assembly
+step entirely. Has a multi-file write (3 instead of 1) which is fine.
 
-Two callsites. Not duplication so much as two layers of the same
-optimisation. Documented in both. Fine.
+Either is a refactor for a quieter week. Today's structure works.
+
+### A3. usage.ts at 792 lines — reiteration
+
+Same observation as the previous review. The recent additions
+(rehydrateDate, recoverCacheState, jitteredBackoff, acquireFetchLock,
+collectBody, both fetchers) keep growing it. A natural split would
+be: `cache.ts` (read/write/recoverCacheState), `lock.ts`
+(acquireFetchLock + bumpCacheTimestamp + jitteredBackoff), `api.ts`
+(fetchApi + fetchJson + collectBody + parsing helpers), main module
+(getUsage + getCreditGrant orchestration).
+
+Not urgent. Land it the next time a substantive feature touches this
+file.
 
 ---
 
 ## 6. Test quality
 
-### T1. No integration test for `getUsage` orchestration
+### T1. T2's parametrisation introduced a `LINE2.full = 83` constant
+that the suite computes from QUOTA_TIER_WIDTH. The renderer's own
+`TIER_SEGMENT_WIDTH` lives in `render.ts` and is not exported. So the
+test recomputes the same numbers from a duplicated literal table.
 
-Unit tests cover `clamp`, `parseDate`, `parseExtraUsage`,
-`rehydrateDate`, `recoverCacheState`, `acquireFetchLock`,
-`jitteredBackoff` — all primitive helpers.
+If TIER_SEGMENT_WIDTH ever changes in render.ts and not the test,
+the suite will silently fail on actual content while passing on
+"expected width matches our literal". That's the kind of drift T2
+was meant to prevent.
 
-`getUsage` itself — the orchestrator that combines cache reads, lock
-acquisition, fetcher dispatch, and result writes — is untested. A
-regression in the lock/cache coordination would not be caught by the
-current suite.
+**Fix**: export `TIER_SEGMENT_WIDTH` from render.ts and import it in
+the test instead of redefining it. One line of import; deletes the
+test's literal copy.
 
-**Action**: add a focused test that fakes `https` (or factors `fetchApi`
-behind a dependency-injection seam) and exercises:
+### T2. The R1 deadline timer has no test (cross-listed at R1).
 
-- cache hit → returns cached, no fetch
-- cache miss + lock free → fetches, writes cache
-- cache miss + lock held by peer → returns cached / yields
-- 429 → backoff written; subsequent call within backoff returns last-good
-- 500 → preserves prior counter + lastGoodData
+### T3. Integration test takes ~750 ms — informational
 
-The seam is the cleanest of the two options — a `fetchApi` parameter
-that defaults to the real one.
+`getUsage.integration.test.ts` runs in ~750 ms because each subtest
+invokes `readCredentials`, which on macOS spawns `/usr/bin/security`
+(Keychain lookup) and waits up to 3 s. Works fine in CI; just slow on
+local machines that have real Keychain entries.
 
-### T2. Tier-boundary tests pin absolute column counts — test/render.test.ts
-
-Every layout change shifts the boundaries by ±N. The last iteration
-required updating ~10 tests because col0Width grew by 2. The tests
-encode the implementation's arithmetic, not its behaviour.
-
-A more robust formulation: derive expected widths from the same
-formulae the renderer uses, parametrise tests by tier name, assert
-behaviour relative to the tier ("at the full-tier width, branch is
-present"; "one column below, branch is absent") with the widths
-computed once.
-
-Cost: ~50 lines of test-helper refactor. Pays back with the next
-layout change.
-
-### T3. Console.log restoration is inconsistent across tests
-
-`capture()` was hardened with try/finally in M4. Most other render
-tests still do raw `const orig = console.log; ...; console.log = orig;`
-without try/finally. A future test that throws between those lines
-contaminates every test that follows.
-
-**Action**: thread every render-invocation through `capture()` (or
-add an internal helper that does the try/finally for the manual
-multi-line cases).
+A `CLAUDE_QUOTA_SKIP_KEYCHAIN=1` env flag honoured by `readFromKeychain`
+would let the integration test bypass Keychain entirely and rely on
+the planted file. Adds an env flag for test speed; consider only if
+this becomes annoying.
 
 ---
 
 ## 7. UX / rendering consistency
 
-### U1. Disabled extra-usage segment is a fixed 9 chars — render.ts:434
+### U1. `apiHint` is computed before the rows-branching but only used
+in the rows=1 branch — render.ts:545
 
 ```ts
-return `${dim(' ○$:')} ${dim(' off')}`;
+const apiHint = usage?.apiError === 'rate-limited'
+  ? dim(' ⟳')
+  : usage?.apiUnavailable
+    ? c(YELLOW, ' ⚠')
+    : '';
+const apiHintW = visibleLength(apiHint);
+
+if (rows === 1) {
+  …  // uses apiHint + apiHintW
+} else {
+  …  // doesn't use either
+}
 ```
 
-This was sized to match the **compact** tier (9 chars). At full tier
-every other segment is 32 chars; at no-reset 25; at no-pace 19. The
-disabled segment doesn't grow to match — line 3 with extras disabled
-ends abruptly compared to the wide quota segments next to it.
+The rows≥2 branch uses its own `syncHint` definition further down
+(line 620), which differs subtly: syncHint is only set for
+'rate-limited' (no ⚠ for failures, because rows≥2 falls through to
+the explicit `else if (apiUnavailable)` branch). apiHint covers both.
 
-Two options:
+Two parallel definitions of "what to show when API is unhappy" is
+itself a small drift opportunity. Consolidate: one helper
+`apiStatusHint(usage)` returning `{ glyph, visibleWidth }`, used by
+both rows=1 and the rows≥2 syncHint slot.
 
-1. Pad to the active detail tier's width. Adds tier awareness to
-   `renderExtraUsage`'s disabled branch.
-2. Drop the segment entirely except at compact tier. Cleaner — the
-   user infers "absent at this tier" instead of seeing a stub.
+### U2. Disabled extra-usage placeholder hardcodes the visible width 9 — render.ts:438
 
-Option 2 is less work and arguably clearer. Pick whichever; both beat
-the status quo.
-
-### U2. apiUnavailable line uses `usage:⟳`/`usage:⚠` prefix — render.ts:672
-
-The rows≥2 + apiUnavailable branch emits a separate line:
-
-```
-max │ usage:⟳
+```ts
+const placeholder = `${dim(' ○$:')} ${dim(' off')}`; // 9 visible chars
+…
+return placeholder + ' '.repeat(Math.max(0, target - 9));
 ```
 
-The rows=1 path emits the bare `⟳` glyph at the right edge. The
-rows=2 line-2 / rows=3 line-3 syncHint emits a bare ` ⟳` next to
-quotas. Three different presentations of the same status.
-
-**Action**: collapse to one. The bare glyph (rows=1 + syncHint) is
-the cleanest; drop the `usage:` prefix in the apiUnavailable line.
-
-### U3. Long project names aren't truncated — stdin.ts:114, render.ts
-
-`getProjectName` returns the basename of `cwd` verbatim. A 60-char
-project name would push line 1 layout into compact-tier territory at
-quite wide terminals. Tier degradation handles total width but not
-per-segment overflow.
-
-Low priority — uncommon in practice. If addressed, truncate
-`getProjectName`'s return to e.g. 24 chars with an ellipsis.
+The literal 9 is the comment's word, not the code's. If someone
+changes the placeholder text (e.g., adds a glyph), the padding
+arithmetic silently miscalculates. Replace with
+`visibleLength(placeholder)`. Self-correcting.
 
 ---
 
-## 8. API contract / future-proofing
+## 8. ABI stability
 
-### F1. `UsageData` field optionality is mostly `null`-or-value — types.ts
+(No findings.)
 
-Every `*ResetAt` field is `Date | null`, every percentage is
-`number | null`. The shape is tolerant of API drift. ✓
-
-### F2. Cache-file forward-compat — usage.ts:178 `recoverCacheState`
-
-Old caches missing `lastGoodData` fall through to `prev.data` if it's
-healthy. `rateLimitedCount ?? 0`. New `retryAfterUntil` field is
-optional and the read-side falls back to count-derived backoff. ✓
-
-The only field whose absence isn't defensively handled:
-`cache.fetchStartedAt` — but its branch checks `if (cache.fetchStartedAt
-&& ...)` so absence is fine. ✓
-
-### F3. Profile-cache schema migration — usage.ts:482
-
-```ts
-if (!cache.rateLimitTier) return null;
-```
-
-This forces re-fetch when the cache predates the tier-storage feature.
-Good migration shim. Worth noting that this implies a one-time
-mandatory profile API hit per upgrade, which adds to P2's cold-start
-fanout.
+A2 from the last round set up the constants and a pinning test.
+Nothing has drifted since.
 
 ---
 
 ## Cross-lens severity
 
-### Medium (worth doing, no rush)
+### Medium (worth landing)
 
-- **R1** — overall request deadline (slow-loris tolerance)
-- **P2** — fetch lock for `getCreditGrant`
-- **U1** — disabled extra-usage segment misalignment
-- **U2** — three presentations of the API status — pick one
-- **T1** — `getUsage` orchestration test
+- **C1** — Lock-release identity check (UUID/PID + verify-on-unlink)
+- **R1/T2** — Test for the slow-loris deadline timer
+- **U1** — Consolidate `apiHint` / `syncHint` into one helper
+- **C3** — Honour HTTP-date Retry-After format
 
-### Low (cleanup / fragility)
+### Low (cleanup)
 
-- **C1** — drop vestigial `fetchStartedAt` (cleanup, makes the lock the single source of truth)
-- **C2** — narrower disabled-extra-usage type
-- **S1** — `fchmodSync` belt-and-suspenders on lock open
-- **A2** — document the `data.js` / `credit-grant.js` ABI
-- **A1** — split usage.ts when next change lands
-- **P1** — hoist `Buffer.byteLength(DASHBOARD_HTML)` to module const
-- **T2** — parametrise tier-boundary tests
-- **T3** — try/finally everywhere `console.log` is patched
-- **U3** — truncate long project names
+- **C2** — `let deadline` declared before `finish` (TS clarity)
+- **P1** — Refactor fetchApi/fetchJson around a shared helper
+- **T1** — Export TIER_SEGMENT_WIDTH from render.ts; drop test's copy
+- **U2** — Use `visibleLength(placeholder)` instead of literal 9
+- **R2** — Reorder `getCreditGrant` before `getUsage` in main()
 
-### Informational (no action recommended)
+### Informational (no action)
 
-- **S2 / R3** — lock-identity races; sub-microsecond and bounded blast radius
-- **P3** — git subprocess cost is the dominant cycle; caching has worse trade-offs
+- A1 — dashboard.ts JS body literals (documented trade-off)
+- A2 — dashboard.ts JS template structure (large refactor)
+- A3 — usage.ts size (split when next feature lands here)
+- P3 — lock+bump cost on cold path (correct trade-off)
+- T3 — integration test speed (acceptable)

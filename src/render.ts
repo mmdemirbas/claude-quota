@@ -273,8 +273,13 @@ function monthElapsedFraction(now: number): number {
 export type DetailLevel = 'full' | 'no-reset' | 'no-pace' | 'compact';
 const DETAIL_LEVELS: DetailLevel[] = ['full', 'no-reset', 'no-pace', 'compact'];
 
-/** Per-tier visible width of a quota / extra-usage segment. */
-const TIER_SEGMENT_WIDTH: Record<DetailLevel, number> = {
+/**
+ * Per-tier visible width of a quota / extra-usage segment.
+ * Exported so tests don't have to hand-mirror the same literals — the
+ * source of truth lives here, and a layout change updates every test
+ * that derives its boundaries from these widths in lockstep.
+ */
+export const TIER_SEGMENT_WIDTH: Record<DetailLevel, number> = {
   full: 32,
   'no-reset': 25,
   'no-pace': 19,
@@ -445,9 +450,9 @@ function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): s
     // Pad the placeholder to the active tier's width so the segment
     // aligns with neighbouring quota segments (which all render at
     // exactly TIER_SEGMENT_WIDTH[detail] visible chars).
-    const placeholder = `${dim(' ○$:')} ${dim(' off')}`; // 9 visible chars
+    const placeholder = `${dim(' ○$:')} ${dim(' off')}`;
     const target = TIER_SEGMENT_WIDTH[detail];
-    return placeholder + ' '.repeat(Math.max(0, target - 9));
+    return placeholder + ' '.repeat(Math.max(0, target - visibleLength(placeholder)));
   }
 
   const { usedCredits, monthlyLimit, creditGrant } = usage.extraUsage;

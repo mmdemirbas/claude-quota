@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { render, modelDisplay, calcPace, formatBalance } from '../src/render.js';
+import { render, modelDisplay, calcPace, formatBalance, TIER_SEGMENT_WIDTH } from '../src/render.js';
 import type { RenderInput } from '../src/render.js';
 import type { UsageData } from '../src/types.js';
 import { visibleLength } from '../src/ansi.js';
@@ -509,7 +509,10 @@ describe('height-adaptive rendering', () => {
 // the source of truth here; the test mirrors them.
 
 const SEP = 3; // " │ "
-const QUOTA_TIER_WIDTH = { full: 32, 'no-reset': 25, 'no-pace': 19, compact: 9 };
+// Imported from render.ts so the test never drifts from the renderer's
+// per-tier widths. Aliased to QUOTA_TIER_WIDTH for backward-compat with
+// the existing test-block names.
+const QUOTA_TIER_WIDTH = TIER_SEGMENT_WIDTH;
 const CTX_BAR_WIDTH = 19;          // dim("ctx:") + bar(10) + sp + pct(4)
 const LINK_WIDTH = 2;              // " ⧉"
 const FETCH_TIME_WIDTH = 6;        // "⟳HH:MM"
