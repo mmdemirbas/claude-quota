@@ -111,8 +111,21 @@ export function getEffortLevel(stdin: StdinData): string | null {
   return stdin.effort_level ?? stdin.effortLevel ?? stdin.effort ?? null;
 }
 
+/**
+ * Hard cap on the visible width of a project name in the statusline.
+ * Long project names would otherwise push line 1 layout into compact
+ * tier (or hard-truncate the line) at terminal widths where it shouldn't.
+ *
+ * Exported for testing.
+ */
+export const PROJECT_NAME_MAX = 24;
+
 export function getProjectName(stdin: StdinData): string | null {
   if (!stdin.cwd) return null;
   const segments = stdin.cwd.split(/[/\\]/).filter(Boolean);
-  return segments.length > 0 ? segments[segments.length - 1] : null;
+  if (segments.length === 0) return null;
+  const name = segments[segments.length - 1];
+  if (name.length <= PROJECT_NAME_MAX) return name;
+  // 23 chars + 1-char ellipsis = exactly PROJECT_NAME_MAX visible width.
+  return name.slice(0, PROJECT_NAME_MAX - 1) + '…';
 }

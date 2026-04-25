@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getModelName, getContextPercent, getProjectName, getEffortLevel,
-  parseStdinPayload, STDIN_MAX_BYTES,
+  parseStdinPayload, STDIN_MAX_BYTES, PROJECT_NAME_MAX,
 } from '../src/stdin.js';
 import type { StdinData } from '../src/types.js';
 
@@ -155,6 +155,22 @@ describe('getProjectName', () => {
   test('handles root path gracefully', () => {
     const stdin: StdinData = { cwd: '/' };
     assert.equal(getProjectName(stdin), null);
+  });
+
+  // U3: long project names previously rendered verbatim and could push
+  // line 1 layout into compact tier at unexpectedly wide terminals.
+  test('truncates names longer than the max with an ellipsis', () => {
+    const longName = 'a'.repeat(40);
+    const stdin: StdinData = { cwd: `/home/user/${longName}` };
+    const result = getProjectName(stdin);
+    assert.equal(result?.length, PROJECT_NAME_MAX);
+    assert.ok(result?.endsWith('…'), 'truncated name must end with an ellipsis');
+  });
+
+  test('does not truncate names at exactly the max length', () => {
+    const exact = 'b'.repeat(PROJECT_NAME_MAX);
+    const stdin: StdinData = { cwd: `/home/user/${exact}` };
+    assert.equal(getProjectName(stdin), exact);
   });
 });
 
