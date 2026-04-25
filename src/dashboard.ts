@@ -234,131 +234,124 @@ main { max-width: 1100px; margin: 0 auto; }
   gap: 12px;
 }
 .card-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-2);
 }
-.card-reset-head {
+.card-pace {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.card-pace .glyph {
+  font-size: 16px;
+  line-height: 1;
+  position: relative;
+  top: 2px;
+}
+.card-pace .glyph.under { color: var(--ok); }
+.card-pace .glyph.over  { color: var(--warn); }
+.card-pace .glyph.over.risk { color: var(--risk); }
+
+/* ── Metric rows (two per card: usage + time elapsed) ─────────────────
+ * The card's central insight is the comparison between these two bars:
+ * if usage > elapsed, the user is burning faster than the window
+ * advances; if usage < elapsed, they're under pace. The reader extracts
+ * pace direction from the bar geometry alone — the small pace word in
+ * the card head is reinforcement, not the primary channel. */
+
+.metric {
+  display: grid;
+  grid-template-columns: 60px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+}
+.metric .m-label {
   font-family: var(--mono);
   font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--text-3);
-  letter-spacing: 0.02em;
+  text-align: right;
 }
-.card-reset-head .v {
-  color: var(--text);
-  font-weight: 500;
-}
-
-.card-stat {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.card-stat .pct {
+.metric .m-value {
   font-family: var(--mono);
-  font-size: 38px;
+  font-size: 14px;
   font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1;
+  color: var(--text);
+  text-align: right;
+  letter-spacing: -0.01em;
 }
-.card-stat .pct .pct-unit {
-  font-size: 22px;
+.metric .m-value .m-unit {
   font-weight: 500;
   color: var(--text-2);
   margin-left: 1px;
 }
-.card-stat .proj {
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--text-2);
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  white-space: nowrap;
-}
-.card-stat .proj .glyph {
-  font-size: 16px;
-  line-height: 1;
-  color: var(--text-2);
-  position: relative;
-  top: 2px;
-}
-.card-stat .proj .glyph.under { color: var(--ok); }
-.card-stat .proj .glyph.over  { color: var(--warn); }
-.card-stat .proj .glyph.over.risk { color: var(--risk); }
-.card-stat .proj .label { color: var(--text-3); }
-.card-stat .proj .v { color: var(--text); font-weight: 500; }
 
-/* ── Quota bar ──────────────────────────────────────────────────────── */
+/* ── Bar (two variants: usage [severity-tinted] + time [neutral]) ────── */
 
 .bar {
   position: relative;
   height: var(--bar-h);
   background: var(--bg-inset);
   border-radius: 999px;
-  overflow: visible;
+  overflow: hidden;
 }
 .bar-fill {
   position: absolute;
   top: 0; bottom: 0; left: 0;
   border-radius: 999px;
   background: var(--accent);
-  /* dim portion = current usage up to ideal (or full current if under-pace).
-   * The bar is rendered in three CSS layers: bar-fill (dim coral, the
-   * "you're here" baseline), bar-over (bright coral overlay for the
-   * over-pace section), bar-proj (very dim coral showing the projected
-   * end-of-window position). Layer opacities pull apart on the same hue
-   * so the eye can read all three at once. */
-  opacity: 0.55;
 }
-.bar-over {
-  position: absolute;
-  top: 0; bottom: 0;
-  background: var(--accent);
-  border-radius: 0 999px 999px 0;
-  /* full opacity (no override) — this is the "exceeded ideal" portion
-   * and should read brighter than the baseline fill. */
-}
+/* Dim trail showing where the usage bar would land at end-of-window
+ * if the current rate held. Same hue, low opacity, sits to the right
+ * of the solid fill. */
 .bar-proj {
   position: absolute;
   top: 0; bottom: 0;
   background: var(--accent);
-  opacity: 0.22;
-}
-.bar-ideal {
-  position: absolute;
-  top: -3px; bottom: -3px;
-  width: 2px;
-  background: var(--text);
-  opacity: 0.55;
-  border-radius: 1px;
-  z-index: 2;
+  opacity: 0.28;
 }
 
-/* Severity tinting routes through the bar's inner colours via class. */
-.bar.sev-ok    .bar-fill, .bar.sev-ok    .bar-over, .bar.sev-ok    .bar-proj { background: var(--ok); }
-.bar.sev-warn  .bar-fill, .bar.sev-warn  .bar-over, .bar.sev-warn  .bar-proj { background: var(--warn); }
-.bar.sev-over  .bar-fill, .bar.sev-over  .bar-over, .bar.sev-over  .bar-proj { background: var(--over); }
-.bar.sev-risk  .bar-fill, .bar.sev-risk  .bar-over, .bar.sev-risk  .bar-proj { background: var(--risk); }
+/* Usage bar: severity-tinted. */
+.bar.sev-ok    .bar-fill, .bar.sev-ok    .bar-proj { background: var(--ok); }
+.bar.sev-warn  .bar-fill, .bar.sev-warn  .bar-proj { background: var(--warn); }
+.bar.sev-over  .bar-fill, .bar.sev-over  .bar-proj { background: var(--over); }
+.bar.sev-risk  .bar-fill, .bar.sev-risk  .bar-proj { background: var(--risk); }
+
+/* Time bar: neutral, low-saturation. The reader reads it as "context",
+ * not as an alarm channel — time advances regardless of behaviour. */
+.bar.bar-time .bar-fill {
+  background: var(--text-3);
+  opacity: 0.7;
+}
 
 .card-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  letter-spacing: 0.01em;
+}
+.card-foot .row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-3);
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
 }
-.card-foot .ideal-label { font-style: normal; }
-.card-foot .ideal-label .v { color: var(--text-2); }
-.card-foot.empty { justify-content: center; }
+.card-foot .v { color: var(--text); font-weight: 500; }
+.card-foot .v-2 { color: var(--text-2); }
+.card-foot.empty { color: var(--text-3); align-items: center; }
 
 /* ── Money / Extra usage ────────────────────────────────────────────── */
 
@@ -617,84 +610,94 @@ function renderDashboard() {
   }
 
   // ── Cards ────────────────────────────────────────────
+  // Each card is a two-bar comparison:
+  //   used    [████████░░░░░░░░░░░░░░] 38%   <- severity-tinted, with
+  //                                              dim trail to projected
+  //   elapsed [██████████████████░░░░] 87%   <- neutral grey
+  //
+  // Pace is read directly from the gap between the two bars: a longer
+  // usage bar than time bar = burning fast (over pace); shorter = under
+  // pace. The pace word in the card head is reinforcement.
   html += '<div class="cards">';
   for (const q of d.quotas) {
     const pace = calcPace(q.pct, q.resetAt, q.windowMs);
     const projected = pace ? pace.projected : null;
-    const idealPct = pace ? Math.round(pace.elapsed * 100) : null;
+    const elapsedPct = pace ? Math.round(pace.elapsed * 100) : null;
     const sev = severityFor(q.pct, projected);
 
-    // Bar geometry: filled = min(pct, ideal); over = pct - ideal; proj = projected - pct.
-    // All three clamped to [0,100] so a 999% projected doesn't over-flow the track.
     const cur = Math.max(0, Math.min(100, q.pct));
-    const ideal = idealPct == null ? null : Math.max(0, Math.min(100, idealPct));
     const projC = projected == null ? null : Math.max(0, Math.min(100, projected));
-    const overPace = ideal != null && cur > ideal;
-    const fillEnd = overPace ? ideal : cur;
-    const overEnd = overPace ? cur : null;
-    const projStart = cur;
-    const projEnd = projC != null && projC > cur ? projC : null;
+    const projTrailEnd = projC != null && projC > cur ? projC : null;
 
-    let bar = '<div class="bar sev-' + sev + '">';
-    bar += '<div class="bar-fill" style="width:' + fillEnd + '%"></div>';
-    if (overEnd != null) {
-      bar += '<div class="bar-over" style="left:' + ideal + '%;width:' + (overEnd - ideal) + '%"></div>';
+    // Usage bar: solid fill to current %, dim trail extending to the
+    // projected end-of-window value (capped at 100%).
+    let usageBar = '<div class="bar sev-' + sev + '">';
+    usageBar += '<div class="bar-fill" style="width:' + cur + '%"></div>';
+    if (projTrailEnd != null) {
+      usageBar += '<div class="bar-proj" style="left:' + cur + '%;width:'
+        + (projTrailEnd - cur) + '%"></div>';
     }
-    if (projEnd != null) {
-      bar += '<div class="bar-proj" style="left:' + projStart + '%;width:' + (projEnd - projStart) + '%"></div>';
-    }
-    if (ideal != null) {
-      bar += '<div class="bar-ideal" style="left:' + ideal + '%"></div>';
-    }
-    bar += '</div>';
+    usageBar += '</div>';
 
-    // Stat row right side: glyph + projected. Glyph colour tracks
-    // pace direction (under = ok green, over = warn yellow, over+risk
-    // = red). The projection number itself is bright text-1 so the
-    // eye lands on the prediction, not the label.
-    let projHtml = '';
-    if (projected != null && pace) {
+    // Time bar: only meaningful when we know how far through the window
+    // we are. Neutral colour — time isn't a quota, it just elapses.
+    let timeBar = '';
+    if (elapsedPct != null) {
+      timeBar = '<div class="metric">'
+        + '<span class="m-label">elapsed</span>'
+        + '<div class="bar bar-time"><div class="bar-fill" style="width:' + elapsedPct + '%"></div></div>'
+        + '<span class="m-value">' + elapsedPct + '<span class="m-unit">%</span></span>'
+        + '</div>';
+    }
+
+    // Head right: small pace word (under / on / over). Glyph colour
+    // tracks direction; over-pace at risk severity goes red.
+    let paceHtml = '';
+    if (pace) {
       const glyphCls = pace.paceWord === 'over'
         ? (sev === 'risk' ? 'glyph over risk' : 'glyph over')
         : pace.paceWord === 'under' ? 'glyph under' : 'glyph';
-      projHtml = '<span class="proj">'
-        +   '<span class="' + glyphCls + '">' + pace.glyph + '</span>'
-        +   '<span><span class="label">proj</span> <span class="v">' + projected + '%</span></span>'
-        + '</span>';
-    } else if (projected != null) {
-      projHtml = '<span class="proj">'
-        +   '<span><span class="label">proj</span> <span class="v">' + projected + '%</span></span>'
+      paceHtml = '<span class="card-pace">'
+        + '<span class="' + glyphCls + '">' + pace.glyph + '</span>'
+        + pace.paceWord + ' pace'
         + '</span>';
     }
 
-    // Head: title plus the reset countdown (the most actionable
-    // number on the card, so it gets prime real estate top-right).
-    let headRight = '';
+    // Foot row 1: projected end-of-window usage when pace is known.
+    // Spelled out as "projected" (was "proj" — read as a verb).
+    // Foot row 2: relative + absolute reset time on one line so the
+    // eye can correlate the two without scanning.
+    let foot = '';
+    if (projected != null) {
+      foot += '<div class="row">'
+        + '<span>projected end <span class="v">' + projected + '%</span></span>'
+        + '<span class="v-2">at current rate</span>'
+        + '</div>';
+    }
     if (q.resetAt && q.resetAt > d.now) {
-      headRight = '<span class="card-reset-head">resets in <span class="v">'
-        + fmt(q.resetAt - d.now) + '</span></span>';
+      foot += '<div class="row">'
+        + '<span>resets in <span class="v">' + fmt(q.resetAt - d.now) + '</span></span>'
+        + '<span class="v-2">' + fmtDate(q.resetAt) + '</span>'
+        + '</div>';
+    } else if (q.resetAt) {
+      foot += '<div class="row"><span class="v-2">window closed</span><span class="v-2">'
+        + fmtDate(q.resetAt) + '</span></div>';
     }
-
-    // Foot: absolute reset time on left, ideal-pace marker label on
-    // right when pace data exists. Both subtle — they're context for
-    // the eye that's already focused on the headline %.
-    let footLeft = q.resetAt ? fmtDate(q.resetAt) : '';
-    let footRight = (idealPct != null)
-      ? '<span class="ideal-label">ideal <span class="v">' + idealPct + '%</span></span>'
-      : '';
-    const footHtml = '<span>' + footLeft + '</span><span>' + footRight + '</span>';
 
     html += '<section class="card sev-' + sev + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">' + _esc(q.label) + '</span>'
-      +   headRight
+      +   paceHtml
       + '</div>'
-      + '<div class="card-stat">'
-      +   '<span class="pct">' + q.pct + '<span class="pct-unit">%</span></span>'
-      +   projHtml
+      + '<div class="metric">'
+      +   '<span class="m-label">used</span>'
+      +   usageBar
+      +   '<span class="m-value">' + cur + '<span class="m-unit">%</span></span>'
       + '</div>'
-      + bar
-      + '<div class="card-foot">' + footHtml + '</div>'
+      + timeBar
+      + '<div class="card-foot' + (foot ? '' : ' empty') + '">'
+      +   (foot || '<span>no active window</span>')
+      + '</div>'
       + '</section>';
   }
   html += '</div>';
