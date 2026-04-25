@@ -1,19 +1,37 @@
-import { mkdirSync } from 'node:fs';
-import { writeFileSecure } from './secure-fs.js';
+import { mkdirSync, statSync } from 'node:fs';
+import { writeFileSecure, checkFileSafe } from './secure-fs.js';
 import { pluginDir, dashboardHtmlPath } from './paths.js';
 
 /**
- * Write dashboard.html to the plugin dir (always overwrite to keep the
- * shipped markup in sync with code). Routed through writeFileSecure so
- * the file lands with mode 0o600. This matters because the dashboard
- * JS is reloaded from disk on every poll — a world-writable file is a
- * second-user-to-first-user code execution path if an attacker can
- * replace the HTML between renders.
+ * Write dashboard.html to the plugin dir if it isn't already present
+ * with the right size and 0o600 mode. The HTML is content-pinned to
+ * this build of the plugin, so once a same-version file is on disk
+ * there is nothing to update — the previous unconditional rewrite
+ * cost an open/fsync/chmod/rename per statusline tick.
+ *
+ * Routed through writeFileSecure so the file lands with mode 0o600
+ * when we DO write. That matters because the dashboard JS is reloaded
+ * from disk on every poll — a world-writable file is a second-user-
+ * to-first-user code execution path if an attacker can replace the
+ * HTML between renders. We re-validate the existing file's safety via
+ * checkFileSafe so we never preserve a permissive or attacker-symlinked
+ * copy: those are rewritten unconditionally.
  */
 export function ensureDashboardHtml(): void {
   try {
     mkdirSync(pluginDir(), { recursive: true });
-    writeFileSecure(dashboardHtmlPath(), DASHBOARD_HTML);
+    const path = dashboardHtmlPath();
+    const safety = checkFileSafe(path);
+    if (safety.ok) {
+      // Content is build-pinned, so a size match is a perfect identity
+      // check. Avoids reading the file just to compare bytes.
+      try {
+        const st = statSync(path);
+        // Buffer.byteLength is precise for UTF-8 content.
+        if (st.size === Buffer.byteLength(DASHBOARD_HTML, 'utf8')) return;
+      } catch { /* fall through to write */ }
+    }
+    writeFileSecure(path, DASHBOARD_HTML);
   } catch { /* ignore */ }
 }
 
