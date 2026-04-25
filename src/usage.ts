@@ -454,6 +454,9 @@ export function acquireFetchLock(now: number, lockPathOverride?: string): { rele
   }
   if (fd === null) return null;
 
+  // Belt-and-suspenders: openSync's mode is masked by umask. Force 0o600
+  // explicitly so an unusual umask can't leave the lock world-readable.
+  try { fs.fchmodSync(fd, 0o600); } catch { /* ignore */ }
   try { fs.writeSync(fd, String(process.pid)); } catch { /* ignore */ }
   fs.closeSync(fd);
 

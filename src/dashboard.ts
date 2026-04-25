@@ -27,8 +27,7 @@ export function ensureDashboardHtml(): void {
       // check. Avoids reading the file just to compare bytes.
       try {
         const st = statSync(path);
-        // Buffer.byteLength is precise for UTF-8 content.
-        if (st.size === Buffer.byteLength(DASHBOARD_HTML, 'utf8')) return;
+        if (st.size === DASHBOARD_HTML_BYTES) return;
       } catch { /* fall through to write */ }
     }
     writeFileSecure(path, DASHBOARD_HTML);
@@ -804,3 +803,7 @@ ${JS}
 </script>
 </body>
 </html>`;
+
+// Build-pinned, so its UTF-8 byte length is a constant. Computed once
+// at module load instead of on every ensureDashboardHtml call.
+const DASHBOARD_HTML_BYTES = Buffer.byteLength(DASHBOARD_HTML, 'utf8');
