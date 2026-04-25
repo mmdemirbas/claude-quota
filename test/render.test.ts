@@ -531,21 +531,23 @@ const SEP = 3; // " │ "
 // per-tier widths. Aliased to QUOTA_TIER_WIDTH for backward-compat with
 // the existing test-block names.
 const QUOTA_TIER_WIDTH = TIER_SEGMENT_WIDTH;
-const CTX_BAR_WIDTH = 19;          // dim("ctx:") + bar(10) + sp + pct(4)
-const LINK_WIDTH = 2;              // " ⧉"
+const CTX_BARE_WIDTH = 19;         // dim("ctx:") + bar(10) + sp + pct(4)
+const LINK_WIDTH = 10;             // " dashboard"
+const CTX_BAR_WIDTH = CTX_BARE_WIDTH + LINK_WIDTH; // ctx + link in non-compact tiers
 const FETCH_TIME_WIDTH = 6;        // "⟳HH:MM"
 
-// modelText "sonnet high" (11) + LINK = 13; planText "max" (3); fetchTime 6.
-const COL0 = Math.max('sonnet high'.length + LINK_WIDTH, 'max'.length, FETCH_TIME_WIDTH);
+// modelText "sonnet high" (11); planText "max" (3); fetchTime 6.
+// Link is no longer in col-0 — it travels with the ctx segment.
+const COL0 = Math.max('sonnet high'.length, 'max'.length, FETCH_TIME_WIDTH);
 
-// Line 1 (model+link │ ctx │ git):
-//   full / no-reset: COL0 + SEP + 19 + SEP + 21  (git = "my-project git:(main)")
-//   no-pace:         COL0 + SEP + 19 + SEP + 10  (git = "my-project")
-//   compact:         COL0 + SEP + 19             (git omitted)
+// Line 1 (model │ ctx[+link] │ git):
+//   full / no-reset: COL0 + SEP + 29 + SEP + 21  (git = "my-project git:(main)")
+//   no-pace:         COL0 + SEP + 29 + SEP + 10  (git = "my-project")
+//   compact:         COL0 + SEP + 19             (git + link both omitted)
 const LINE1 = {
   fullWithBranch: COL0 + SEP + CTX_BAR_WIDTH + SEP + 'my-project git:(main)'.length,
   noPace:         COL0 + SEP + CTX_BAR_WIDTH + SEP + 'my-project'.length,
-  compact:        COL0 + SEP + CTX_BAR_WIDTH,
+  compact:        COL0 + SEP + CTX_BARE_WIDTH,
 };
 
 // Line 2 (plan │ 5h │ snt), each quota at the named tier.
@@ -629,15 +631,28 @@ describe('width-adaptive rendering', () => {
       'OSC 8 link closer must be present');
   });
 
-  test('line 1 keeps the dashboard link visible at every tier (pinned to model prefix)', () => {
-    // The link used to be the first thing dropped when width tightened —
-    // it's now an always-on UI affordance attached to the model prefix.
-    for (const columns of [120, 80, 59, 48, 35, 25]) {
+  test('line 1 keeps the dashboard link visible at widths that fit the no-pace tier', () => {
+    // The link rides with the ctx segment in non-compact tiers. The
+    // narrowest tier that retains the link is no-pace (ctx+link +
+    // project, no branch) — LINE1.noPace columns wide.
+    for (const columns of [120, 80, LINE1.fullWithBranch, LINE1.noPace]) {
       const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns });
       const rawLine1 = lines[0] ?? '';
       assert.ok(rawLine1.includes('\x1b]8;;file://'),
         `link must remain visible at columns=${columns}; got: ${strip(rawLine1)}`);
+      assert.ok(strip(rawLine1).includes('dashboard'),
+        `link text must remain visible at columns=${columns}; got: ${strip(rawLine1)}`);
     }
+  });
+
+  test('line 1 drops the dashboard link at compact tier (narrow terminals)', () => {
+    // One column below no-pace falls through to compact, which drops
+    // the 10-char " dashboard" suffix so the percentage still fits.
+    const lines = renderLines({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: LINE1.noPace - 1 });
+    const rawLine1 = lines[0] ?? '';
+    assert.ok(!strip(rawLine1).includes('dashboard'),
+      `link should be dropped below no-pace tier; got: ${strip(rawLine1)}`);
+    assert.ok(strip(rawLine1).includes('20%'), 'ctx percentage must remain');
   });
 
   test('line 1 visible length still respects column width with link present', () => {
