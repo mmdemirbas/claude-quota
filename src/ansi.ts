@@ -15,7 +15,20 @@ const ANSI_SGR_GLOBAL = /\x1b\[[0-9;]*m/g;
 const ANSI_OSC8 = /\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/y;
 const ANSI_OSC8_GLOBAL = /\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
-const ANSI_RESET = /^\x1b\[0?m$/;
+/**
+ * Detects an SGR sequence that fully closes any open colour state.
+ *
+ * - `\x1b[m` and `\x1b[0m` — bare full reset (the only forms render.ts emits today).
+ * - `\x1b[0;0m` etc. — multi-zero reset variants from external producers.
+ * - `\x1b[39m` / `\x1b[49m` — default foreground / background, both close the
+ *   per-channel colour state.
+ *
+ * If a sequence we don't classify as a reset turns out to actually be one in
+ * a future producer's output, the worst case is a redundant trailing
+ * `\x1b[0m` from `truncate` — visually harmless. Better to over-reset than
+ * leave colour leaking into whatever follows the truncated string.
+ */
+const ANSI_RESET = /^\x1b\[(?:0(?:;0)*|39|49)?m$/;
 const OSC8_CLOSE_SEQUENCE = '\x1b]8;;\x1b\\';
 const ESC_CHAR = 0x1b;
 

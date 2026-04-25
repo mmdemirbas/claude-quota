@@ -105,6 +105,27 @@ describe('truncate', () => {
     assert.equal(visibleLength(cut), 6);
   });
 
+  // L5: ANSI_RESET also accepts the multi-zero, default-fg, and default-bg
+  // forms so they don't trigger a redundant trailing reset.
+  test('multi-zero reset \\x1b[0;0m also closes color tracking', () => {
+    const s = '\x1b[31mhel\x1b[0;0mworld';
+    const cut = truncate(s, 6);
+    // No second reset appended — \x1b[0;0m already closed colour.
+    const tail = cut.slice(cut.lastIndexOf('\x1b'));
+    assert.ok(/^\x1b\[0(?:;0)+m/.test(tail) || cut.endsWith('wor'),
+      `unexpected trailing escape: ${JSON.stringify(cut)}`);
+    assert.equal(visibleLength(cut), 6);
+  });
+
+  test('default-fg \\x1b[39m closes colour tracking', () => {
+    const s = '\x1b[31mhel\x1b[39mworld';
+    const cut = truncate(s, 6);
+    // Cut at 6 keeps "helwor"; no trailing \x1b[0m needed beyond what was emitted.
+    assert.ok(!cut.endsWith('\x1b[0m'),
+      'a redundant \\x1b[0m should not be appended when \\x1b[39m already closed colour');
+    assert.equal(visibleLength(cut), 6);
+  });
+
   // Hostile / unusual inputs that previous versions scanned via repeated
   // s.slice(i) — performance and correctness regressions to guard.
 
