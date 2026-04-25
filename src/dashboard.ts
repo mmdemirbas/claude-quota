@@ -229,48 +229,43 @@ main { max-width: 1100px; margin: 0 auto; }
 
 .card-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .card-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--text-2);
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
-.card-pace {
+
+/* Aside text. Projected % sits in card-head (top right of quota chart).
+ * Reset times sit in card-foot (bottom right of time chart). Both mono,
+ * dim, right-aligned. */
+.aside {
   font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-2);
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
-.card-pace .glyph {
-  font-size: 16px;
-  line-height: 1;
-  position: relative;
-  top: 2px;
-}
-.card-pace .glyph.under { color: var(--ok); }
-.card-pace .glyph.over  { color: var(--warn); }
-.card-pace .glyph.over.risk { color: var(--risk); }
+.aside .v   { color: var(--text); font-weight: 500; }
+.aside .v-2 { color: var(--text-2); }
+.aside .lbl { color: var(--text-3); }
+.aside.stack { display: inline-flex; flex-direction: column; gap: 2px; line-height: 1.3; text-align: right; }
 
-/* ── Metric rows (two per card: usage + time elapsed) ─────────────────
- * The card's central insight is the comparison between these two bars:
- * if usage > elapsed, the user is burning faster than the window
- * advances; if usage < elapsed, they're under pace. The reader extracts
- * pace direction from the bar geometry alone — the small pace word in
- * the card head is reinforcement, not the primary channel. */
+/* ── Metric rows (quota + time per card) ──────────────────────────────
+ * Each row is [label][bar][value%]. Asides live above (projected, in
+ * card-head) and below (reset, in card-foot) so the bars get full
+ * card width without competition. */
 
 .metric {
   display: grid;
-  grid-template-columns: 60px 1fr 52px;
+  grid-template-columns: 60px 1fr 56px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 .metric .m-label {
   font-family: var(--mono);
@@ -287,6 +282,7 @@ main { max-width: 1100px; margin: 0 auto; }
   color: var(--text);
   text-align: right;
   letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
 }
 .metric .m-value .m-unit {
   font-weight: 500;
@@ -294,14 +290,20 @@ main { max-width: 1100px; margin: 0 auto; }
   margin-left: 1px;
 }
 
-/* ── Bar (two variants: usage [severity-tinted] + time [neutral]) ────── */
+/* ── Bar (two variants: quota [severity-tinted] + time [neutral]) ─────
+ * Each bar carries up to two vertical line indicators: a solid line at
+ * the "current" position (quota: now-usage; time: now-elapsed) and a
+ * dashed line at the "estimated" end-of-window position (quota:
+ * projected; time: 100% = reset). Drawing the same line type at the
+ * same conceptual moment ("now" / "end of window") on both bars lets
+ * the reader visually map the two metrics to each other. */
 
 .bar {
   position: relative;
   height: var(--bar-h);
   background: var(--bg-inset);
   border-radius: 999px;
-  overflow: hidden;
+  overflow: visible;
 }
 .bar-fill {
   position: absolute;
@@ -309,9 +311,6 @@ main { max-width: 1100px; margin: 0 auto; }
   border-radius: 999px;
   background: var(--accent);
 }
-/* Dim trail showing where the usage bar would land at end-of-window
- * if the current rate held. Same hue, low opacity, sits to the right
- * of the solid fill. */
 .bar-proj {
   position: absolute;
   top: 0; bottom: 0;
@@ -319,97 +318,81 @@ main { max-width: 1100px; margin: 0 auto; }
   opacity: 0.28;
 }
 
-/* Usage bar: severity-tinted. */
+/* Solid "current" line. Sits taller than the bar (top: -3 / bottom: -3)
+ * so it reads as a marker, not a section boundary. */
+.bar-now {
+  position: absolute;
+  top: -4px; bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  border-radius: 1px;
+  z-index: 3;
+}
+/* Dashed "estimated" line. Vertical dashes via repeating gradient. */
+.bar-end {
+  position: absolute;
+  top: -4px; bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  background-image: repeating-linear-gradient(
+    to bottom, var(--text-2) 0 3px, transparent 3px 6px);
+  z-index: 3;
+}
+
+/* Quota bar: severity-tinted fill + trail. */
 .bar.sev-ok    .bar-fill, .bar.sev-ok    .bar-proj { background: var(--ok); }
 .bar.sev-warn  .bar-fill, .bar.sev-warn  .bar-proj { background: var(--warn); }
 .bar.sev-over  .bar-fill, .bar.sev-over  .bar-proj { background: var(--over); }
 .bar.sev-risk  .bar-fill, .bar.sev-risk  .bar-proj { background: var(--risk); }
 
-/* Time bar: neutral, low-saturation. The reader reads it as "context",
- * not as an alarm channel — time advances regardless of behaviour. */
+/* Time bar: neutral. The reader reads it as "context", not alarm. */
 .bar.bar-time .bar-fill {
   background: var(--text-3);
   opacity: 0.7;
 }
 
+/* Card foot houses the reset time aside (bottom-right of time chart),
+ * or a "no active window" placeholder when no time data exists. */
 .card-foot {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  justify-content: flex-end;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-3);
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  letter-spacing: 0.01em;
+  padding-top: 2px;
 }
-.card-foot .row {
+.card-foot.empty {
+  justify-content: center;
+}
+
+/* ── Extra usage card ───────────────────────────────────────────────── */
+/* Reuses the same .card / .metric scaffolding as the quota cards so the
+ * visual rhythm of the dashboard stays consistent. The only addition
+ * is a small balance/limit summary row beneath the two bars. */
+
+.card.money .ms-summary {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-.card-foot .v { color: var(--text); font-weight: 500; }
-.card-foot .v-2 { color: var(--text-2); }
-.card-foot.empty { color: var(--text-3); align-items: center; }
-
-/* ── Money / Extra usage ────────────────────────────────────────────── */
-
-.money-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px 28px;
-  align-items: end;
-}
-.money-card.span { grid-column: 1 / -1; }
-
-.money-head {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 4px;
-}
-.money-head .title {
-  font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
-  color: var(--text-2); font-weight: 600;
-}
-.money-head .sub { font-size: 12px; color: var(--text-3); font-family: var(--mono); }
-
-.money-stat .ms-label {
-  font-size: 11px;
-  color: var(--text-3);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 6px;
-}
-.money-stat .ms-value {
+  gap: 16px;
   font-family: var(--mono);
-  font-size: 26px;
-  font-weight: 600;
-  line-height: 1.1;
-  letter-spacing: -0.01em;
-}
-.money-stat .ms-sub {
   font-size: 12px;
   color: var(--text-2);
-  margin-top: 4px;
-  font-family: var(--mono);
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
 }
-
-.money-bar {
-  grid-column: 1 / -1;
-  height: 6px;
-  background: var(--bg-inset);
-  border-radius: 999px;
-  overflow: hidden;
-  margin-top: 4px;
+.card.money .ms-summary .item .lbl {
+  color: var(--text-3);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 10px;
+  margin-right: 4px;
 }
-.money-bar-fill { height: 100%; border-radius: 999px; }
+.card.money .ms-summary .item .v {
+  color: var(--text);
+  font-weight: 600;
+}
 
 /* ── Empty state ────────────────────────────────────────────────────── */
 
@@ -468,15 +451,29 @@ function _esc(s) {
     .replace(/'/g, '&#39;');
 }
 
-// Single severity classifier for the entire UI. Both the headline %
-// colour and the card stripe + bar tint route through this — they
-// must agree, otherwise a card looks "warn"-yellow while its bar
-// glows green.
-function severityFor(pct, projected) {
-  var p = projected != null && projected > pct ? projected : pct;
-  if (p >= 100 || pct >= 95) return 'risk';
-  if (p >= 85)               return 'over';
-  if (p >= 65)               return 'warn';
+// Pace-aware severity classifier. Routes the card stripe and the bar
+// tint through one rule so they cannot disagree. The key insight: a
+// projection in the warn band is only alarming when the user is
+// actually heading there. If pace is "under", the bar is climbing
+// slower than time and the projected number is a soft estimate that
+// will most likely be undershot — show green. If pace is "over", the
+// projection is the more likely outcome and we colour by it.
+//
+// paceWord: 'under' | 'on' | 'over' | undefined (no pace data).
+function severityFor(pct, projected, paceWord) {
+  // Hard alarms: actually broken or about to break, regardless of pace.
+  if (pct >= 95) return 'risk';
+  if (projected != null && projected >= 100) return 'risk';
+  if (pct >= 85) return 'over';
+  if (projected != null && projected >= 90) return 'over';
+  // Over-pace bumps a healthy-looking number into warn so the user
+  // sees it's trending wrong before they hit the absolute thresholds.
+  if (paceWord === 'over') {
+    if (projected != null && projected >= 75) return 'over';
+    if (projected != null && projected >= 60) return 'warn';
+  }
+  // High current usage even at safe pace.
+  if (pct >= 75) return 'warn';
   return 'ok';
 }
 
@@ -485,21 +482,29 @@ function renderDashboard() {
   var raw = DATA.lastGoodData || DATA.data;
   if (raw.apiUnavailable && !DATA.lastGoodData) return;
 
-  // Build dashboard data from cache shape
+  // Build dashboard data from cache shape. Labels track the wording on
+  // claude.ai/settings/usage so the dashboard and the source of truth
+  // speak the same vocabulary.
   var now = Date.now();
   var quotas = [];
   if (raw.fiveHour !== null && raw.fiveHour !== undefined)
-    quotas.push({ id: '5h', label: '5-Hour', pct: raw.fiveHour,
+    quotas.push({ id: '5h', label: 'Current session', pct: raw.fiveHour,
       resetAt: raw.fiveHourResetAt ? new Date(raw.fiveHourResetAt).getTime() : null, windowMs: FIVE_HOUR_MS });
-  if (raw.sonnet !== null && raw.sonnet !== undefined)
-    quotas.push({ id: 'snt', label: 'Sonnet 7d', pct: raw.sonnet,
-      resetAt: raw.sonnetResetAt ? new Date(raw.sonnetResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
   if (raw.sevenDay !== null && raw.sevenDay !== undefined)
-    quotas.push({ id: '7d', label: '7-Day', pct: raw.sevenDay,
+    quotas.push({ id: '7d', label: 'All models', pct: raw.sevenDay,
       resetAt: raw.sevenDayResetAt ? new Date(raw.sevenDayResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  if (raw.sonnet !== null && raw.sonnet !== undefined)
+    quotas.push({ id: 'snt', label: 'Sonnet only', pct: raw.sonnet,
+      resetAt: raw.sonnetResetAt ? new Date(raw.sonnetResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
   if (raw.opus !== null && raw.opus !== undefined)
-    quotas.push({ id: 'ops', label: 'Opus 7d', pct: raw.opus,
+    quotas.push({ id: 'ops', label: 'Opus only', pct: raw.opus,
       resetAt: raw.opusResetAt ? new Date(raw.opusResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  if (raw.design !== null && raw.design !== undefined)
+    quotas.push({ id: 'dsn', label: 'Claude Design', pct: raw.design,
+      resetAt: raw.designResetAt ? new Date(raw.designResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  if (raw.routines !== null && raw.routines !== undefined)
+    quotas.push({ id: 'rtn', label: 'Claude Routines', pct: raw.routines,
+      resetAt: raw.routinesResetAt ? new Date(raw.routinesResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
 
   var extraUsage = null;
   if (raw.extraUsage && raw.extraUsage.enabled) {
@@ -611,150 +616,198 @@ function renderDashboard() {
 
   // ── Cards ────────────────────────────────────────────
   // Each card is a two-bar comparison:
-  //   used    [████████░░░░░░░░░░░░░░] 38%   <- severity-tinted, with
-  //                                              dim trail to projected
-  //   elapsed [██████████████████░░░░] 87%   <- neutral grey
+  //   QUOTA  [████|░░░░░░░░░░░░░░░░░░░·] 50%   projected end 74%
+  //   TIME   [██████████████|░░░░░░░░░·] 68%   resets in 1h 37m
+  //                                            Apr 25, 09:40 PM
   //
-  // Pace is read directly from the gap between the two bars: a longer
-  // usage bar than time bar = burning fast (over pace); shorter = under
-  // pace. The pace word in the card head is reinforcement.
+  // The solid pipe (|) marks "current"; the dotted/dashed pipe (·)
+  // marks "estimated end". Same line type means the same conceptual
+  // moment ("now" is solid, "end of window" is dashed) on both bars,
+  // so the reader can map one to the other without explicit labels.
+  // Severity (bar tint + left-edge stripe) takes pace into account so
+  // a high projected number under safe pace doesn't trigger a false alarm.
   html += '<div class="cards">';
   for (const q of d.quotas) {
     const pace = calcPace(q.pct, q.resetAt, q.windowMs);
     const projected = pace ? pace.projected : null;
     const elapsedPct = pace ? Math.round(pace.elapsed * 100) : null;
-    const sev = severityFor(q.pct, projected);
+    const paceWord = pace ? pace.paceWord : undefined;
+    const sev = severityFor(q.pct, projected, paceWord);
 
     const cur = Math.max(0, Math.min(100, q.pct));
     const projC = projected == null ? null : Math.max(0, Math.min(100, projected));
     const projTrailEnd = projC != null && projC > cur ? projC : null;
 
-    // Usage bar: solid fill to current %, dim trail extending to the
-    // projected end-of-window value (capped at 100%).
-    let usageBar = '<div class="bar sev-' + sev + '">';
-    usageBar += '<div class="bar-fill" style="width:' + cur + '%"></div>';
+    // Quota bar: solid fill, dim trail to projected, solid line at
+    // current, dashed line at estimated.
+    let quotaBar = '<div class="bar sev-' + sev + '">';
+    quotaBar += '<div class="bar-fill" style="width:' + cur + '%"></div>';
     if (projTrailEnd != null) {
-      usageBar += '<div class="bar-proj" style="left:' + cur + '%;width:'
-        + (projTrailEnd - cur) + '%"></div>';
+      quotaBar += '<div class="bar-proj" style="left:' + cur
+        + '%;width:' + (projTrailEnd - cur) + '%"></div>';
     }
-    usageBar += '</div>';
+    quotaBar += '<div class="bar-now" style="left:' + cur + '%"></div>';
+    if (projC != null) {
+      quotaBar += '<div class="bar-end" style="left:' + projC + '%"></div>';
+    }
+    quotaBar += '</div>';
 
-    // Time bar: only meaningful when we know how far through the window
-    // we are. Neutral colour — time isn't a quota, it just elapses.
+    // Time bar: solid line at elapsed, dashed line at 100% (= reset).
+    // The dashed line on the time bar carries the same "estimated end"
+    // semantic as the quota bar's dashed line — both fire at the same
+    // moment in time, so the reader can map one to the other.
     let timeBar = '';
     if (elapsedPct != null) {
       timeBar = '<div class="metric">'
-        + '<span class="m-label">elapsed</span>'
-        + '<div class="bar bar-time"><div class="bar-fill" style="width:' + elapsedPct + '%"></div></div>'
+        + '<span class="m-label">time</span>'
+        + '<div class="bar bar-time">'
+        +   '<div class="bar-fill" style="width:' + elapsedPct + '%"></div>'
+        +   '<div class="bar-now" style="left:' + elapsedPct + '%"></div>'
+        +   '<div class="bar-end" style="left:100%"></div>'
+        + '</div>'
         + '<span class="m-value">' + elapsedPct + '<span class="m-unit">%</span></span>'
         + '</div>';
     }
 
-    // Head right: small pace word (under / on / over). Glyph colour
-    // tracks direction; over-pace at risk severity goes red.
-    let paceHtml = '';
-    if (pace) {
-      const glyphCls = pace.paceWord === 'over'
-        ? (sev === 'risk' ? 'glyph over risk' : 'glyph over')
-        : pace.paceWord === 'under' ? 'glyph under' : 'glyph';
-      paceHtml = '<span class="card-pace">'
-        + '<span class="' + glyphCls + '">' + pace.glyph + '</span>'
-        + pace.paceWord + ' pace'
+    // Card head right (top-right of quota chart): projected end %.
+    let projAside = '';
+    if (projected != null) {
+      projAside = '<span class="aside">'
+        + '<span class="lbl">projected end</span> '
+        + '<span class="v">' + projected + '%</span>'
         + '</span>';
     }
 
-    // Foot row 1: projected end-of-window usage when pace is known.
-    // Spelled out as "projected" (was "proj" — read as a verb).
-    // Foot row 2: relative + absolute reset time on one line so the
-    // eye can correlate the two without scanning.
+    // Card foot (bottom-right of time chart): reset time, both forms.
     let foot = '';
-    if (projected != null) {
-      foot += '<div class="row">'
-        + '<span>projected end <span class="v">' + projected + '%</span></span>'
-        + '<span class="v-2">at current rate</span>'
+    if (timeBar && q.resetAt && q.resetAt > d.now) {
+      foot = '<div class="card-foot">'
+        + '<span class="aside stack">'
+        +   '<span><span class="lbl">resets in</span> <span class="v">' + fmt(q.resetAt - d.now) + '</span></span>'
+        +   '<span class="v-2">' + fmtDate(q.resetAt) + '</span>'
+        + '</span>'
         + '</div>';
-    }
-    if (q.resetAt && q.resetAt > d.now) {
-      foot += '<div class="row">'
-        + '<span>resets in <span class="v">' + fmt(q.resetAt - d.now) + '</span></span>'
-        + '<span class="v-2">' + fmtDate(q.resetAt) + '</span>'
-        + '</div>';
-    } else if (q.resetAt) {
-      foot += '<div class="row"><span class="v-2">window closed</span><span class="v-2">'
-        + fmtDate(q.resetAt) + '</span></div>';
+    } else if (!timeBar && q.resetAt && q.resetAt > d.now) {
+      // Window known but no pace yet — show countdown centered.
+      foot = '<div class="card-foot empty">resets in <span class="v" style="color:var(--text);font-weight:500;margin-left:4px">'
+        + fmt(q.resetAt - d.now) + '</span></div>';
+    } else if (!timeBar) {
+      foot = '<div class="card-foot empty">no active window</div>';
     }
 
     html += '<section class="card sev-' + sev + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">' + _esc(q.label) + '</span>'
-      +   paceHtml
+      +   projAside
       + '</div>'
       + '<div class="metric">'
-      +   '<span class="m-label">used</span>'
-      +   usageBar
+      +   '<span class="m-label">quota</span>'
+      +   quotaBar
       +   '<span class="m-value">' + cur + '<span class="m-unit">%</span></span>'
       + '</div>'
       + timeBar
-      + '<div class="card-foot' + (foot ? '' : ' empty') + '">'
-      +   (foot || '<span>no active window</span>')
-      + '</div>'
+      + foot
       + '</section>';
   }
   html += '</div>';
 
-  // ── Extra usage / credit balance ─────────────────────────
-  if (d.extraUsage) {
+  // ── Extra usage card ─────────────────────────────────────
+  // Mirrors the two-bar quota card: SPEND bar (severity-tinted) +
+  // MONTH bar (neutral). Same vertical-line markers ("now" solid,
+  // "estimated end" dashed) keep the visual language consistent so a
+  // reader doesn't have to learn a second card type.
+  if (d.extraUsage && d.extraUsage.enabled !== false) {
     const e = d.extraUsage;
-    const balance = e.creditGrant != null ? Math.max(0, e.creditGrant - e.usedCredits) : null;
-    const balancePct = (balance != null && e.creditGrant > 0)
-      ? Math.max(0, (balance / e.creditGrant) * 100) : 0;
-    const monthlyPct = e.monthlyLimit > 0
-      ? Math.min(100, (e.usedCredits / e.monthlyLimit) * 100) : 0;
-    const monthlySev = monthlyPct >= 90 ? 'risk' : monthlyPct >= 75 ? 'over' : monthlyPct > 0 ? 'warn' : 'ok';
-    const balSev = balancePct < 10 ? 'risk' : balancePct < 30 ? 'over' : balancePct < 60 ? 'warn' : 'ok';
+    const monthlyLimit = e.monthlyLimit || 0;
+    const used = e.usedCredits || 0;
+    const monthlyPct = monthlyLimit > 0 ? Math.min(100, (used / monthlyLimit) * 100) : 0;
+    const balance = e.creditGrant != null ? Math.max(0, e.creditGrant - used) : null;
 
-    let monthsRemaining = null;
-    if (balance != null && e.usedCredits > 0) {
-      const dt = new Date(d.now);
-      const dayOfMonth = dt.getDate();
-      const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
-      const dailyRate = e.usedCredits / Math.max(1, dayOfMonth - 1 + dt.getHours() / 24);
-      const monthlyProj = dailyRate * daysInMonth;
-      if (monthlyProj > 0) monthsRemaining = Math.round(balance / monthlyProj * 10) / 10;
+    // Month-elapsed: lets us project month-end spend at the current
+    // rate and tint the spend bar accordingly.
+    const dt = new Date(d.now);
+    const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+    const monthFraction = ((dt.getDate() - 1) + dt.getHours() / 24) / daysInMonth;
+    const elapsedPct = Math.round(monthFraction * 100);
+    const monthEndAt = new Date(dt.getFullYear(), dt.getMonth() + 1, 1).getTime();
+
+    let projectedPct = null;
+    let projectedSpend = null;
+    if (monthFraction >= 0.02 && monthlyLimit > 0) {
+      projectedSpend = used / monthFraction;
+      projectedPct = Math.min(999, Math.round((projectedSpend / monthlyLimit) * 100));
+    }
+    const paceWord = projectedPct == null ? undefined
+      : monthlyPct > elapsedPct + 5 ? 'over'
+      : monthlyPct < elapsedPct - 5 ? 'under' : 'on';
+    const sev = severityFor(Math.round(monthlyPct), projectedPct, paceWord);
+
+    const cur = Math.round(monthlyPct);
+    const projC = projectedPct == null ? null : Math.max(0, Math.min(100, projectedPct));
+    const projTrailEnd = projC != null && projC > cur ? projC : null;
+
+    // Spend bar
+    let spendBar = '<div class="bar sev-' + sev + '">';
+    spendBar += '<div class="bar-fill" style="width:' + cur + '%"></div>';
+    if (projTrailEnd != null) {
+      spendBar += '<div class="bar-proj" style="left:' + cur + '%;width:'
+        + (projTrailEnd - cur) + '%"></div>';
+    }
+    spendBar += '<div class="bar-now" style="left:' + cur + '%"></div>';
+    if (projC != null) {
+      spendBar += '<div class="bar-end" style="left:' + projC + '%"></div>';
+    }
+    spendBar += '</div>';
+
+    // Quota-row aside: projected month-end spend.
+    let projAside = '';
+    if (projectedSpend != null) {
+      projAside = '<span class="aside">'
+        + '<span class="lbl">projected end</span> '
+        + '<span class="v">' + fmtMoney(projectedSpend) + '</span>'
+        + '</span>';
     }
 
-    const sevColorVar = function(s) { return 'var(--' + s + ')'; };
+    // Time-row aside: relative + absolute reset (1st of next month).
+    const monthEndMs = monthEndAt - d.now;
+    const resetAside = '<span class="aside stack">'
+      + '<span><span class="lbl">resets in</span> <span class="v">' + fmt(monthEndMs) + '</span></span>'
+      + '<span class="v-2">' + fmtDate(monthEndAt) + '</span>'
+      + '</span>';
 
-    html += '<section class="money-card span">'
-      + '<div class="money-head">'
-      +   '<span class="title">Extra usage</span>'
-      +   '<span class="sub">' + Math.round(monthlyPct) + '% of monthly limit used</span>'
+    html += '<section class="card money sev-' + sev + '">'
+      + '<div class="card-head">'
+      +   '<span class="card-title">Extra usage</span>'
+      +   projAside
       + '</div>'
-      + '<div class="money-stat">'
-      +   '<div class="ms-label">This month</div>'
-      +   '<div class="ms-value" style="color:' + sevColorVar(monthlySev) + '">' + fmtMoney(e.usedCredits) + '</div>'
-      +   '<div class="ms-sub">of ' + fmtMoney(e.monthlyLimit) + ' limit</div>'
-      + '</div>';
-
-    if (balance != null) {
-      html += '<div class="money-stat">'
-        +   '<div class="ms-label">Credit balance</div>'
-        +   '<div class="ms-value" style="color:' + sevColorVar(balSev) + '">' + fmtMoney(balance) + '</div>'
-        +   '<div class="ms-sub">of ' + fmtMoney(e.creditGrant) + ' grant'
-        +     (monthsRemaining != null ? ' \\u00b7 ~' + monthsRemaining + ' mo at pace' : '')
-        +   '</div>'
-        + '</div>';
-      html += '<div class="money-bar">'
-        + '<div class="money-bar-fill" style="width:' + balancePct + '%;background:' + sevColorVar(balSev) + '"></div>'
-        + '</div>';
-    }
-
-    html += '</section>';
+      + '<div class="metric">'
+      +   '<span class="m-label">spend</span>'
+      +   spendBar
+      +   '<span class="m-value">' + fmtMoney(used) + '</span>'
+      + '</div>'
+      + '<div class="metric">'
+      +   '<span class="m-label">month</span>'
+      +   '<div class="bar bar-time">'
+      +     '<div class="bar-fill" style="width:' + elapsedPct + '%"></div>'
+      +     '<div class="bar-now" style="left:' + elapsedPct + '%"></div>'
+      +     '<div class="bar-end" style="left:100%"></div>'
+      +   '</div>'
+      +   '<span class="m-value">' + elapsedPct + '<span class="m-unit">%</span></span>'
+      + '</div>'
+      + '<div class="card-foot">' + resetAside + '</div>'
+      + '<div class="ms-summary">'
+      +   '<span class="item"><span class="lbl">limit</span><span class="v">' + fmtMoney(monthlyLimit) + '</span></span>'
+      +   (balance != null
+            ? '<span class="item"><span class="lbl">balance</span><span class="v">' + fmtMoney(balance) + '</span><span class="v-2"> of ' + fmtMoney(e.creditGrant) + ' grant</span></span>'
+            : '')
+      + '</div>'
+      + '</section>';
   }
 
-  // ── Footer: single line, mono, dim. The pill in the header already
-  // tells the user the freshness; the footer just records exact time. ──
-  html += '<footer>fetched ' + new Date(d.fetchedAt).toLocaleString() + '</footer>';
+  // ── Footer: single line, mono, dim. Both representations of the
+  // fetch time so the reader can correlate "12s ago" with a clock. ──
+  html += '<footer>fetched ' + new Date(d.fetchedAt).toLocaleString()
+    + ' \\u00b7 ' + agoStr + '</footer>';
 
   html += '</main>';
   app.innerHTML = html;

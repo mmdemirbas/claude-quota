@@ -217,6 +217,8 @@ describe('recoverCacheState', () => {
     sevenDay: 17, sevenDayResetAt: null,
     sonnet: null, sonnetResetAt: null,
     opus: null, opusResetAt: null,
+    design: null, designResetAt: null,
+    routines: null, routinesResetAt: null,
     extraUsage: null,
   };
 

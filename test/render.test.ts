@@ -65,6 +65,10 @@ const baseUsage: UsageData = {
   sonnetResetAt: in3d,
   opus: null,
   opusResetAt: null,
+  design: null,
+  designResetAt: null,
+  routines: null,
+  routinesResetAt: null,
   extraUsage: null,
 };
 

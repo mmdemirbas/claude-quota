@@ -125,6 +125,8 @@ export async function getUsage(opts?: { forceRefresh?: boolean; fetcher?: FetchA
       sevenDay: null, sevenDayResetAt: null,
       sonnet: null, sonnetResetAt: null,
       opus: null, opusResetAt: null,
+      design: null, designResetAt: null,
+      routines: null, routinesResetAt: null,
       extraUsage: null,
       apiUnavailable: true,
       apiError: result.error,
@@ -173,6 +175,13 @@ export async function getUsage(opts?: { forceRefresh?: boolean; fetcher?: FetchA
     sonnetResetAt: parseDate(result.data.seven_day_sonnet?.resets_at),
     opus: clamp(result.data.seven_day_opus?.utilization),
     opusResetAt: parseDate(result.data.seven_day_opus?.resets_at),
+    // Mapping is a best guess from API field naming and may need to flip
+    // if claude.ai relabels: cowork → "Claude Design" (collaborative
+    // workspaces), oauth_apps → "Claude Routines" (OAuth-driven automation).
+    design: clamp(result.data.seven_day_cowork?.utilization),
+    designResetAt: parseDate(result.data.seven_day_cowork?.resets_at),
+    routines: clamp(result.data.seven_day_oauth_apps?.utilization),
+    routinesResetAt: parseDate(result.data.seven_day_oauth_apps?.resets_at),
     extraUsage: parseExtraUsage(result.data.extra_usage),
   };
 

@@ -54,6 +54,12 @@ export interface UsageData {
   /** 7-day opus-only utilization 0-100 */
   opus: number | null;
   opusResetAt: Date | null;
+  /** 7-day Claude Design (cowork) utilization 0-100 */
+  design: number | null;
+  designResetAt: Date | null;
+  /** 7-day Claude Routines (oauth apps) utilization 0-100 */
+  routines: number | null;
+  routinesResetAt: Date | null;
   /** Extra usage info */
   extraUsage: ExtraUsageData | null;
   /** API error state */
