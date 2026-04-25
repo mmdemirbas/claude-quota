@@ -9,7 +9,7 @@ import type {
 } from './types.js';
 import { readCredentials, getPlanName } from './credentials.js';
 import { readFileSecure, writeFileSecure } from './secure-fs.js';
-import { pluginDir } from './paths.js';
+import { pluginDir, CACHE_VAR_DATA, CACHE_VAR_CREDIT_GRANT, CACHE_FILE_DATA, CACHE_FILE_CREDIT_GRANT } from './paths.js';
 import { warn } from './log.js';
 
 const CACHE_TTL_MS = 2 * 60_000;           // 2 min hard TTL (force re-fetch)
@@ -35,8 +35,12 @@ const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — balance changes onl
 const CREDIT_GRANT_NULL_TTL_MS = 24 * 60 * 60_000;
 const API_TIMEOUT_MS = 15_000;
 
+// On-disk cache files double as <script src> for the dashboard. Names
+// are pinned in paths.ts so dashboard.ts can interpolate them into its
+// loader without depending on this module.
+
 function getCachePath(): string {
-  return path.join(pluginDir(), 'data.js');
+  return path.join(pluginDir(), CACHE_FILE_DATA);
 }
 
 function getProfileCachePath(): string {
@@ -44,7 +48,7 @@ function getProfileCachePath(): string {
 }
 
 function getCreditGrantCachePath(): string {
-  return path.join(pluginDir(), 'credit-grant.js');
+  return path.join(pluginDir(), CACHE_FILE_CREDIT_GRANT);
 }
 
 /**
@@ -191,7 +195,7 @@ export function recoverCacheState(cachePath: string): { prevCount: number; lastG
 
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
   const cache: CacheFile = { data, timestamp, ...opts };
-  writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
+  writeJsCache(getCachePath(), CACHE_VAR_DATA, JSON.stringify(cache));
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -389,7 +393,7 @@ export function bumpCacheTimestamp(now: number = Date.now()): void {
     // parallel instances all see an expired backoff and race to fetch.
     if (cache.data.apiUnavailable && !cache.rateLimitedCount) return;
     cache.timestamp = now;
-    writeJsCache(getCachePath(), 'DATA', JSON.stringify(cache));
+    writeJsCache(getCachePath(), CACHE_VAR_DATA, JSON.stringify(cache));
   } catch { /* no cache to bump */ }
 }
 
@@ -526,7 +530,7 @@ function readCreditGrantCache(now: number): { hit: true; value: number | null } 
 
 function writeCreditGrantCache(creditGrant: number | null, timestamp: number): void {
   const cache: CreditGrantCacheFile = { creditGrant, timestamp };
-  writeJsCache(getCreditGrantCachePath(), 'CREDIT_GRANT', JSON.stringify(cache));
+  writeJsCache(getCreditGrantCachePath(), CACHE_VAR_CREDIT_GRANT, JSON.stringify(cache));
 }
 
 // ── Generic HTTPS JSON GET ────────────────────────────────────────────────

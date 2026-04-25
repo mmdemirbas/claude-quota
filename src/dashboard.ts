@@ -1,6 +1,10 @@
 import { mkdirSync, statSync } from 'node:fs';
 import { writeFileSecure, checkFileSafe } from './secure-fs.js';
-import { pluginDir, dashboardHtmlPath } from './paths.js';
+import {
+  pluginDir, dashboardHtmlPath,
+  CACHE_VAR_DATA, CACHE_VAR_CREDIT_GRANT,
+  CACHE_FILE_DATA, CACHE_FILE_CREDIT_GRANT,
+} from './paths.js';
 
 /**
  * Write dashboard.html to the plugin dir if it isn't already present
@@ -746,10 +750,14 @@ function renderDashboard() {
 `;
 
 // ── Loader: polls data.js + credit-grant.js every 5s, survives sleep ───
+//
+// File and variable names are interpolated from paths.ts so a rename
+// on either side propagates through the build instead of silently
+// drifting and breaking the dashboard.
 
 const LOADER = `
-var DATA = null;
-var CREDIT_GRANT = null;
+var ${CACHE_VAR_DATA} = null;
+var ${CACHE_VAR_CREDIT_GRANT} = null;
 var _seq = 0;
 var _lastLoad = 0;
 var POLL_MS = 5000;
@@ -763,8 +771,8 @@ function _loadScript(src, cb) {
 function _load() {
   _lastLoad = Date.now();
   ++_seq;
-  _loadScript('credit-grant.js', function() {
-    _loadScript('data.js', function() {
+  _loadScript('${CACHE_FILE_CREDIT_GRANT}', function() {
+    _loadScript('${CACHE_FILE_DATA}', function() {
       if (typeof renderDashboard === 'function') renderDashboard();
     });
   });
