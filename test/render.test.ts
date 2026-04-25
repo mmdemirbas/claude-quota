@@ -485,20 +485,22 @@ describe('height-adaptive rendering', () => {
 // ── width-adaptive rendering ───────────────────────────────────────────────
 //
 // Thresholds are derived from the baseStdin + baseUsage fixture:
-//   col0Width = max("sonnet high"=11, "max"=3) = 11
+//   col0Width = max("sonnet high" + " ⧉"=13, "max"=3, fetchTime=6) = 13
+//     The dashboard link " ⧉" is pinned to line 1's model prefix and is
+//     part of the always-rendered col-0 column on every line.
 //   ctx segment visible width = 19
 //   SEP " │ " = 3
 //
-//   Line 1 (model │ ctx │ git):
-//     full / no-reset: 11+3+19+3+21 = 57  (git = "my-project git:(main)" = 21)
-//     no-pace:         11+3+19+3+10 = 46  (git = "my-project" = 10)
-//     compact:         11+3+19      = 33  (git omitted)
+//   Line 1 (model+link │ ctx │ git):
+//     full / no-reset: 13+3+19+3+21 = 59  (git = "my-project git:(main)" = 21)
+//     no-pace:         13+3+19+3+10 = 48  (git = "my-project" = 10)
+//     compact:         13+3+19      = 35  (git omitted)
 //
 //   Line 2 (plan │ 5h │ snt), each quota at each tier:
-//     full:      11+3+32+3+32 = 81
-//     no-reset:  11+3+25+3+25 = 67
-//     no-pace:   11+3+19+3+19 = 55
-//     compact:   11+3+ 9+3+ 9 = 35
+//     full:      13+3+32+3+32 = 83
+//     no-reset:  13+3+25+3+25 = 69
+//     no-pace:   13+3+19+3+19 = 57
+//     compact:   13+3+ 9+3+ 9 = 37
 
 const baseGit = { branch: 'main', isDirty: false };
 
@@ -506,25 +508,25 @@ describe('width-adaptive rendering', () => {
   // ── line 2 tier boundaries ──────────────────────────────────────────────
 
   test('line 2 shows reset timer at exactly the full-tier width', () => {
-    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 81 });
+    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 83 });
     assert.ok(/[○◔◑◕●]/.test(line2), 'reset circle glyph should be present at full width');
   });
 
   test('line 2 drops reset timer one column below full-tier width', () => {
-    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 80 });
+    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 82 });
     assert.ok(!/[○◔◑◕●]/.test(line2), 'reset circle glyph should be dropped below full-tier width');
     const hasGlyph = line2.includes('↘') || line2.includes('→') || line2.includes('↗');
     assert.ok(hasGlyph, 'pace glyph should still be present in no-reset tier');
   });
 
   test('line 2 shows pace glyph at exactly the no-reset-tier width', () => {
-    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 67 });
+    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 69 });
     const hasGlyph = line2.includes('↘') || line2.includes('→') || line2.includes('↗');
     assert.ok(hasGlyph, 'pace glyph should be present at no-reset-tier width');
   });
 
   test('line 2 drops pace glyph one column below no-reset-tier width', () => {
-    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 66 });
+    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 68 });
     assert.ok(!/[○◔◑◕●]/.test(line2), 'reset circle glyph should be absent');
     const hasGlyph = line2.includes('↘') || line2.includes('→') || line2.includes('↗');
     assert.ok(!hasGlyph, 'pace glyph should be dropped below no-reset-tier width');
@@ -532,8 +534,8 @@ describe('width-adaptive rendering', () => {
   });
 
   test('line 2 drops bars in compact tier', () => {
-    // compact tier renders 35 visible chars exactly; use columns=35 to avoid hard truncation
-    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 35 });
+    // compact tier renders 37 visible chars exactly; use columns=37 to avoid hard truncation
+    const { line2 } = capture({ stdin: baseStdin, usage: baseUsage, git: null, now, columns: 37 });
     assert.ok(!line2.includes('█') && !line2.includes('░'), 'bar chars should be absent in compact tier');
     assert.ok(line2.includes('36%'), '5h percentage must still be visible');
     assert.ok(line2.includes('56%'), 'snt percentage must still be visible');
@@ -542,18 +544,18 @@ describe('width-adaptive rendering', () => {
   // ── line 1 git degradation ──────────────────────────────────────────────
 
   test('line 1 shows branch at exactly the full-tier width', () => {
-    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 57 });
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 59 });
     assert.ok(line1.includes('main'), 'branch should be present at full-tier width');
   });
 
   test('line 1 drops branch one column below full-tier width', () => {
-    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 56 });
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 58 });
     assert.ok(!line1.includes('main'), 'branch should be dropped below full-tier width');
     assert.ok(line1.includes('my-project'), 'project name should still be present');
   });
 
   test('line 1 drops project name below no-pace-tier width', () => {
-    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 45 });
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 47 });
     assert.ok(!line1.includes('my-project'), 'project should be dropped below no-pace-tier width');
     assert.ok(line1.includes('sonnet'), 'model name must remain');
   });
@@ -561,7 +563,7 @@ describe('width-adaptive rendering', () => {
   // ── dashboard link segment ───────────────────────────────────────────────
 
   test('line 1 shows the dashboard OSC 8 link at a wide terminal', () => {
-    // Wide terminal → full tier → link segment included.
+    // Wide terminal → full tier → link rendered after the model prefix.
     const lines: string[] = [];
     const orig = console.log;
     console.log = (...args: unknown[]) => lines.push(args.join(' '));
@@ -577,19 +579,19 @@ describe('width-adaptive rendering', () => {
       'OSC 8 link closer must be present');
   });
 
-  test('line 1 drops the dashboard link below full tier', () => {
-    // 57 cols = no-reset tier — link decoration dropped, branch kept.
-    const lines: string[] = [];
-    const orig = console.log;
-    console.log = (...args: unknown[]) => lines.push(args.join(' '));
-    render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns: 57 });
-    console.log = orig;
-
-    const rawLine1 = lines[0] ?? '';
-    assert.ok(!rawLine1.includes('\x1b]8;;'),
-      'link must drop before the branch does when width is tight');
-    assert.ok(strip(rawLine1).includes('main'),
-      'branch should still render at no-reset tier width');
+  test('line 1 keeps the dashboard link visible at every tier (pinned to model prefix)', () => {
+    // The link used to be the first thing dropped when width tightened —
+    // it's now an always-on UI affordance attached to the model prefix.
+    for (const columns of [120, 80, 59, 48, 35, 25]) {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.join(' '));
+      render({ stdin: baseStdin, usage: baseUsage, git: baseGit, now, columns });
+      console.log = orig;
+      const rawLine1 = lines[0] ?? '';
+      assert.ok(rawLine1.includes('\x1b]8;;file://'),
+        `link must remain visible at columns=${columns}; got: ${strip(rawLine1)}`);
+    }
   });
 
   test('line 1 visible length still respects column width with link present', () => {
@@ -644,25 +646,25 @@ const usageWithExtra: UsageData = {
 
 describe('line 3 width-adaptive rendering', () => {
   test('shows monthly limit in line 3 at exactly the full-tier width', () => {
-    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 81 });
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 83 });
     assert.ok(line3.includes('/$500'), 'monthly limit should be present at full-tier width');
   });
 
   test('drops monthly limit in line 3 one column below full-tier width', () => {
-    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 80 });
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 82 });
     assert.ok(!line3.includes('/$500'), 'monthly limit should be dropped below full-tier width');
     const hasGlyph = line3.includes('↘') || line3.includes('→') || line3.includes('↗');
     assert.ok(hasGlyph, 'pace glyph should still be present in no-reset tier');
   });
 
   test('shows pace glyph in line 3 at exactly the no-reset-tier width', () => {
-    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 67 });
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 69 });
     const hasGlyph = line3.includes('↘') || line3.includes('→') || line3.includes('↗');
     assert.ok(hasGlyph, 'pace glyph should be present at no-reset-tier width');
   });
 
   test('drops pace glyph in line 3 one column below no-reset-tier width', () => {
-    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 66 });
+    const { line3 } = capture({ stdin: baseStdin, usage: usageWithExtra, git: null, now, columns: 68 });
     const hasGlyph = line3.includes('↘') || line3.includes('→') || line3.includes('↗');
     assert.ok(!hasGlyph, 'pace glyph should be dropped below no-reset-tier width');
     assert.ok(line3.includes('█') || line3.includes('░'), 'bar chars should still be present');
@@ -715,22 +717,22 @@ describe('line 3 width-adaptive rendering', () => {
 //
 // With git { branch: 'main', isDirty: true }:
 //   renderGit full:    "my-project git:(main*)"  = 22 visible chars
-//   Line 1 full:       11+3+19+3+22 = 58
+//   Line 1 full:       13+3+19+3+22 = 60
 //   renderGit no-pace: "my-project"              = 10 visible chars
-//   Line 1 no-pace:    11+3+19+3+10 = 46
+//   Line 1 no-pace:    13+3+19+3+10 = 48
 
 describe('git dirty-marker degradation', () => {
   const dirtyGit = { branch: 'main', isDirty: true };
 
   test('dirty marker and branch present at full-tier width', () => {
-    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: dirtyGit, now, columns: 58 });
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: dirtyGit, now, columns: 60 });
     assert.ok(line1.includes('main*'), 'dirty branch should appear at full-tier width');
   });
 
   test('dirty marker absent when branch is dropped at no-pace tier', () => {
-    // At columns=57, full (58) > 57 and no-reset (58) > 57, so no-pace (46) is used.
+    // At columns=59, full (60) > 59 and no-reset (60) > 59, so no-pace (48) is used.
     // no-pace renders project only — branch and dirty marker must not appear.
-    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: dirtyGit, now, columns: 57 });
+    const { line1 } = capture({ stdin: baseStdin, usage: baseUsage, git: dirtyGit, now, columns: 59 });
     assert.ok(line1.includes('my-project'), 'project should still appear');
     assert.ok(!line1.includes('main'), 'branch should not appear at no-pace tier');
     assert.ok(!line1.includes('*'), 'dirty marker must not appear without branch');

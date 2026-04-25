@@ -7,11 +7,13 @@ import { dashboardFileUrl } from './paths.js';
 
 const R = '\x1b[0m';
 const DIM = '\x1b[2m';
+const BOLD = '\x1b[1m';
 const RED = '\x1b[31m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
 const MAGENTA = '\x1b[35m';
 const CYAN = '\x1b[36m';
+const B_CYAN = '\x1b[96m';
 const B_BLUE = '\x1b[94m';
 const B_MAG = '\x1b[95m';
 const BAR_WASTE = '\x1b[38;5;250m'; // slightly dimmer — wasted quota in bars
@@ -298,17 +300,19 @@ function fitLine(
 // ── Segment rendering ──────────────────────────────────────────────────────
 
 /**
- * Clickable dashboard link. Renders as a single glyph wrapped in an
- * OSC 8 hyperlink that opens ~/.claude/plugins/claude-quota/dashboard.html.
+ * Clickable dashboard link. Renders as a single bold-cyan glyph wrapped
+ * in an OSC 8 hyperlink that opens ~/.claude/plugins/claude-quota/dashboard.html.
  * Terminals without OSC 8 support strip the frame and just show the glyph.
  *
- * Only rendered at the `full` tier. On narrower terminals the
- * informational segments (project, branch) win the budget — the link
- * is decorative and drops out first.
+ * No longer rendered as a fitLine segment — pinning it to the model
+ * prefix in `render()` means it survives every width-degradation tier
+ * down to compact, instead of being the first thing dropped.
+ *
+ * Visible width is exactly 1 column (the glyph itself); the leading
+ * space is supplied by the caller.
  */
-function renderDashLink(detail: DetailLevel): string | null {
-  if (detail !== 'full') return null;
-  return c(CYAN, hyperlink('⧉', dashboardFileUrl()));
+function dashLinkGlyph(): string {
+  return `${BOLD}${B_CYAN}${hyperlink('⧉', dashboardFileUrl())}${R}`;
 }
 
 /**
@@ -514,12 +518,15 @@ export function render(input: RenderInput): void {
   // Only relevant when rows ≥ 2 (multi-line output).
   const modelText = modelDisplay(getModelName(stdin), getEffortLevel(stdin));
   const planText  = (usage?.planName ?? '').toLowerCase();
-  const col0Width = Math.max(modelText.length, planText.length);
+  // The dashboard link is pinned to the model prefix on line 1 — " ⧉" =
+  // 2 visible chars. Lines 2 and 3 don't carry the link, so col0Width
+  // includes the link width on the model side and a clamp for the
+  // fetch-time stamp ("⟳HH:MM" = 6) so neither overflows pad0.
+  const LINK_WIDTH = 2;
+  const FETCH_TIME_WIDTH = 6;
+  const col0Width = Math.max(modelText.length + LINK_WIDTH, planText.length, FETCH_TIME_WIDTH);
 
-  // Pad visible text to col0Width; ANSI color goes around the unpadded text, spaces follow.
-  // Math.max guards the case where text is wider than col0Width — happens on line 3
-  // when the fetch-time stamp (⟳HH:MM, 6 chars) exceeds short model+plan names
-  // like "opus" + "Max" (col0Width=4). Without the clamp, ' '.repeat would throw RangeError.
+  // Pad visible text to col0Width; ANSI color wraps the unpadded text, spaces follow.
   const pad0 = (text: string, color: string) =>
     `${color}${text}${R}${' '.repeat(Math.max(0, col0Width - text.length))}`;
 
@@ -530,17 +537,19 @@ export function render(input: RenderInput): void {
 
   let line1: string;
 
+  // The dashboard link is pinned to the model prefix on every layout
+  // height. " ⧉" (2 visible chars). Always shown so the affordance is
+  // discoverable on narrow terminals too.
+  const link = ` ${dashLinkGlyph()}`;
+
   if (rows === 1) {
-    // Single-row mode: model + compact ctx (no bar) + compact 5h + compact 7d
-    // when usage is available. Both ctx and quota bars are omitted; compact
-    // (label + pct) format is used throughout. Git info is dropped in favour
-    // of quota percentages. When usage is unavailable, line 1 collapses to
-    // just model + compact ctx so the layout still matches the no-bars,
-    // no-git intent documented in CLAUDE.md.
+    // Single-row mode: model + link + compact ctx + compact 5h + compact 7d
+    // when usage is available. Bars omitted; compact (label + pct) format
+    // throughout. Git info is dropped in favour of quota percentages.
     const ctxCompact = `${dim('ctx:')} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
     const showQuotas = !!usage && !usage.apiUnavailable;
     const parts: (string | null)[] = [
-      c(CYAN, modelText),
+      `${c(CYAN, modelText)}${link}`,
       ctxCompact,
       showQuotas ? renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, 'compact') : null,
       showQuotas ? renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, 'compact') : null,
@@ -550,16 +559,20 @@ export function render(input: RenderInput): void {
       cols,
     );
   } else {
-    // Multi-row mode: model + ctx bar + project/git + dashboard link.
-    // Both git and link degrade via detail tiers.
+    // Multi-row mode: model + link + ctx bar + project/git.
+    // Git degrades via detail tiers; the link is part of the col-0 prefix
+    // and never drops out.
     const ctxBar = bar(ctxPct, 10, ctxColor);
     const ctxSegment = `${dim('ctx:')}${ctxBar} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
+    // pad0 still pads to col0Width; we manually inject the link inside
+    // the colored model text so visible width = modelText + LINK_WIDTH.
+    const modelPrefix = `${CYAN}${modelText}${R}${link}`
+      + ' '.repeat(Math.max(0, col0Width - modelText.length - LINK_WIDTH));
     line1 = fitLine(
       (detail) => [
-        pad0(modelText, CYAN),
+        modelPrefix,
         ctxSegment,
         renderGit(project, git, detail),
-        renderDashLink(detail),
       ],
       cols,
     );
