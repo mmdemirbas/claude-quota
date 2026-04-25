@@ -42,337 +42,416 @@ export function ensureDashboardHtml(): void {
 // ── Embedded CSS ──────────────────────────────────────────────────────────
 
 const CSS = `
+/* ── Design tokens ──────────────────────────────────────────────────────
+ * Refined dark palette with an Anthropic-style warm coral accent. The
+ * severity ramp (ok / warn / over / risk) is the primary expressive
+ * channel — every saturated colour outside that ramp is reserved for
+ * brand identity (the coral) so eyes land on the data, not the chrome.
+ */
 :root {
-  --bg: #0d1117;
-  --bg2: #161b22;
-  --bg3: #1c2333;
-  --border: #30363d;
-  --text: #e6edf3;
-  --text2: #8b949e;
-  --blue: #58a6ff;
-  --green: #3fb950;
-  --yellow: #d29922;
-  --orange: #db6d28;
-  --red: #f85149;
-  --purple: #bc8cff;
-  --cyan: #39d2c0;
-  --radius: 12px;
+  --bg:        #0e0e12;
+  --bg-card:   #14141b;
+  --bg-inset:  #1c1c26;
+  --border:    #262633;
+  --border-2:  #353546;
+  --text:      #ecedf2;
+  --text-2:    #9a9eaa;
+  --text-3:    #62656f;
+
+  --accent:    #f08c64;          /* warm coral, brand mark */
+  --accent-d:  #c66a47;
+
+  --ok:        #6ee7a7;
+  --warn:      #f5b14a;
+  --over:      #f08c64;
+  --risk:      #ef4444;
+
+  --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Helvetica, Arial, sans-serif;
+
+  --radius:   8px;
+  --radius-s: 4px;
+
+  /* Track height for quota bars: 12px gives enough room to read the
+   * filled / over / projected / wasted layers without dominating the card. */
+  --bar-h:    12px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html { color-scheme: dark; }
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-family: var(--sans);
   background: var(--bg);
+  background-image:
+    radial-gradient(1200px 800px at 80% -20%, rgba(240,140,100,0.04), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, rgba(110,231,167,0.025), transparent 60%);
   color: var(--text);
   line-height: 1.5;
   min-height: 100vh;
-  padding: 24px;
+  padding: 28px 32px 48px;
+  font-feature-settings: 'cv11', 'ss01';
 }
+
+main { max-width: 1100px; margin: 0 auto; }
+
+/* Tabular numerals everywhere we render a stat — keeps columns aligned
+ * across cards (33% next to 6% should line up by digit). */
+.num, .stat, .pct, .proj, .reset, .money { font-variant-numeric: tabular-nums; }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
 
 .header {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
-  margin-bottom: 28px;
-  padding-bottom: 16px;
+  gap: 24px;
+  padding-bottom: 18px;
+  margin-bottom: 22px;
   border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
-.header h1 {
-  font-size: 22px;
+.brand { display: flex; align-items: baseline; gap: 14px; line-height: 1; }
+.brand .mark {
+  width: 10px; height: 10px;
+  background: var(--accent);
+  border-radius: 2px;
+  transform: translateY(2px);
+}
+.brand .plan {
+  font-size: 28px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text);
 }
-.header h1 span { color: var(--blue); }
-.header .meta {
-  font-size: 13px;
-  color: var(--text2);
+.brand .tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
-
-/* ── Gauge cards ─────────────────────────────────────────── */
-
-.gauges {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
-  margin-bottom: 28px;
-}
-
-.gauge-card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
+.head-meta {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.head-meta .pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-2);
+  background: var(--bg-card);
+}
+.head-meta .pill.warn { color: var(--warn); border-color: rgba(245,177,74,0.4); }
+.head-meta .pill .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 0 rgba(110,231,167,0.6);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+.head-meta .pill.warn .dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 0 rgba(245,177,74,0.6);
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(110,231,167,0.5); }
+  50%      { box-shadow: 0 0 0 5px rgba(110,231,167,0); }
+}
+.head-meta a {
+  color: var(--text-2);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border-2);
+  padding-bottom: 1px;
+  transition: color .15s ease, border-color .15s ease;
+}
+.head-meta a:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ── Banner (rate-limit / api error) ─────────────────────────────────── */
+
+.banner {
+  display: flex;
   align-items: center;
   gap: 12px;
-}
-.gauge-card .label {
+  padding: 12px 16px;
+  margin-bottom: 22px;
+  background: var(--bg-card);
+  border: 1px solid rgba(245,177,74,0.3);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
   font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text2);
+  color: var(--text-2);
+}
+.banner strong { color: var(--warn); font-weight: 600; }
+
+/* ── Card grid ──────────────────────────────────────────────────────── */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
 }
 
-.gauge-ring {
+.card {
   position: relative;
-  width: 130px;
-  height: 130px;
-}
-.gauge-ring svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-.gauge-ring .bg-ring {
-  fill: none;
-  stroke: var(--bg3);
-  stroke-width: 10;
-}
-.gauge-ring .fg-ring {
-  fill: none;
-  stroke-width: 10;
-  stroke-linecap: round;
-  transition: stroke-dashoffset 1s ease;
-}
-.gauge-ring .proj-ring {
-  fill: none;
-  stroke-width: 10;
-  opacity: 0.25;
-}
-.gauge-center {
-  position: absolute;
-  inset: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 22px 16px;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  gap: 16px;
+  transition: border-color .2s ease, transform .15s ease;
 }
-.gauge-center .pct {
-  font-size: 28px;
-  font-weight: 700;
+.card:hover { transform: translateY(-1px); }
+.card:hover { border-color: var(--border-2); }
+
+/* Severity stripe on the left — drawn via ::before so we don't need to
+ * paint the entire border in colour (looked too loud). */
+.card::before {
+  content: '';
+  position: absolute;
+  left: -1px; top: -1px; bottom: -1px;
+  width: 3px;
+  background: transparent;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+.card.sev-warn::before { background: var(--warn); }
+.card.sev-over::before { background: var(--over); }
+.card.sev-risk::before { background: var(--risk); }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-2);
+}
+.card-reset-head {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
+.card-reset-head .v {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.card-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.card-stat .pct {
+  font-family: var(--mono);
+  font-size: 38px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   line-height: 1;
 }
-.gauge-center .proj {
-  font-size: 12px;
-  color: var(--text2);
-  margin-top: 2px;
+.card-stat .pct .pct-unit {
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--text-2);
+  margin-left: 1px;
 }
-
-.gauge-footer {
-  text-align: center;
-  font-size: 12px;
-  color: var(--text2);
-  line-height: 1.6;
+.card-stat .proj {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
 }
-.gauge-footer .pace-glyph { font-weight: 700; }
-.gauge-footer .reset-val { color: var(--cyan); font-weight: 600; }
-
-/* ── Section panels ──────────────────────────────────────── */
-
-.panel {
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px 24px;
-  margin-bottom: 20px;
-}
-.panel h2 {
-  font-size: 14px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text2);
-  margin-bottom: 16px;
-}
-
-/* ── Timeline ────────────────────────────────────────────── */
-
-.timeline-track {
+.card-stat .proj .glyph {
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-2);
   position: relative;
-  height: 56px;
-  margin: 20px 0 8px;
+  top: 2px;
 }
-.timeline-bar {
-  position: absolute;
-  top: 22px;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: var(--bg3);
-  border-radius: 2px;
-}
-.timeline-now {
-  position: absolute;
-  top: 14px;
-  width: 2px;
-  height: 20px;
-  background: var(--text);
-  z-index: 2;
-}
-.timeline-now::after {
-  content: 'now';
-  position: absolute;
-  top: -16px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 10px;
-  color: var(--text2);
-  white-space: nowrap;
-}
-.timeline-marker {
-  position: absolute;
-  top: 8px;
-  transform: translateX(-50%);
-  text-align: center;
-  z-index: 1;
-}
-.timeline-marker .dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  margin: 8px auto 4px;
-}
-.timeline-marker .tm-label {
-  font-size: 10px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.timeline-marker .tm-time {
-  font-size: 10px;
-  color: var(--text2);
-  white-space: nowrap;
-}
+.card-stat .proj .glyph.under { color: var(--ok); }
+.card-stat .proj .glyph.over  { color: var(--warn); }
+.card-stat .proj .glyph.over.risk { color: var(--risk); }
+.card-stat .proj .label { color: var(--text-3); }
+.card-stat .proj .v { color: var(--text); font-weight: 500; }
 
-/* ── Pace bars ───────────────────────────────────────────── */
+/* ── Quota bar ──────────────────────────────────────────────────────── */
 
-.pace-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-.pace-row:last-child { margin-bottom: 0; }
-.pace-label {
-  width: 70px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text2);
-  text-align: right;
-  flex-shrink: 0;
-}
-.pace-bar-track {
-  flex: 1;
-  height: 22px;
-  background: var(--bg3);
-  border-radius: 4px;
+.bar {
   position: relative;
-  overflow: hidden;
+  height: var(--bar-h);
+  background: var(--bg-inset);
+  border-radius: 999px;
+  overflow: visible;
 }
-.pace-bar-fill {
+.bar-fill {
   position: absolute;
   top: 0; bottom: 0; left: 0;
-  border-radius: 4px 0 0 4px;
-  filter: brightness(0.55);
+  border-radius: 999px;
+  background: var(--accent);
+  /* dim portion = current usage up to ideal (or full current if under-pace).
+   * The bar is rendered in three CSS layers: bar-fill (dim coral, the
+   * "you're here" baseline), bar-over (bright coral overlay for the
+   * over-pace section), bar-proj (very dim coral showing the projected
+   * end-of-window position). Layer opacities pull apart on the same hue
+   * so the eye can read all three at once. */
+  opacity: 0.55;
 }
-.pace-bar-over {
+.bar-over {
   position: absolute;
   top: 0; bottom: 0;
+  background: var(--accent);
+  border-radius: 0 999px 999px 0;
+  /* full opacity (no override) — this is the "exceeded ideal" portion
+   * and should read brighter than the baseline fill. */
 }
-.pace-bar-proj {
+.bar-proj {
   position: absolute;
   top: 0; bottom: 0;
-  background-image: repeating-linear-gradient(
-    45deg, transparent, transparent 3px, rgba(255,255,255,0.08) 3px, rgba(255,255,255,0.08) 6px);
+  background: var(--accent);
+  opacity: 0.22;
 }
-.pace-bar-marker {
+.bar-ideal {
   position: absolute;
-  top: -1px; bottom: -1px;
+  top: -3px; bottom: -3px;
   width: 2px;
   background: var(--text);
-  opacity: 0.7;
-  z-index: 2;
+  opacity: 0.55;
   border-radius: 1px;
-}
-.pace-bar-marker::after {
-  content: 'ideal';
-  position: absolute;
-  bottom: -14px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 9px;
-  color: var(--text2);
-  white-space: nowrap;
-}
-.pace-val {
-  width: 48px;
-  font-size: 12px;
-  font-weight: 600;
-  flex-shrink: 0;
+  z-index: 2;
 }
 
-/* ── Money panel ─────────────────────────────────────────── */
+/* Severity tinting routes through the bar's inner colours via class. */
+.bar.sev-ok    .bar-fill, .bar.sev-ok    .bar-over, .bar.sev-ok    .bar-proj { background: var(--ok); }
+.bar.sev-warn  .bar-fill, .bar.sev-warn  .bar-over, .bar.sev-warn  .bar-proj { background: var(--warn); }
+.bar.sev-over  .bar-fill, .bar.sev-over  .bar-over, .bar.sev-over  .bar-proj { background: var(--over); }
+.bar.sev-risk  .bar-fill, .bar.sev-risk  .bar-over, .bar.sev-risk  .bar-proj { background: var(--risk); }
 
-.money-grid {
+.card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.card-foot .ideal-label { font-style: normal; }
+.card-foot .ideal-label .v { color: var(--text-2); }
+.card-foot.empty { justify-content: center; }
+
+/* ── Money / Extra usage ────────────────────────────────────────────── */
+
+.money-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 18px 28px;
+  align-items: end;
 }
+.money-card.span { grid-column: 1 / -1; }
 
-.money-stat {
-  background: var(--bg3);
-  border-radius: 8px;
-  padding: 16px;
-}
-.money-stat .ms-label {
-  font-size: 11px;
-  color: var(--text2);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+.money-head {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
   margin-bottom: 4px;
 }
+.money-head .title {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-2); font-weight: 600;
+}
+.money-head .sub { font-size: 12px; color: var(--text-3); font-family: var(--mono); }
+
+.money-stat .ms-label {
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
 .money-stat .ms-value {
+  font-family: var(--mono);
   font-size: 26px;
-  font-weight: 700;
-  line-height: 1.2;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
 }
 .money-stat .ms-sub {
   font-size: 12px;
-  color: var(--text2);
-  margin-top: 2px;
+  color: var(--text-2);
+  margin-top: 4px;
+  font-family: var(--mono);
 }
 
-.balance-bar-track {
-  height: 10px;
-  background: var(--bg3);
-  border-radius: 5px;
-  margin-top: 16px;
+.money-bar {
+  grid-column: 1 / -1;
+  height: 6px;
+  background: var(--bg-inset);
+  border-radius: 999px;
   overflow: hidden;
+  margin-top: 4px;
 }
-.balance-bar-fill {
-  height: 100%;
-  border-radius: 5px;
-  transition: width 1s ease;
-}
+.money-bar-fill { height: 100%; border-radius: 999px; }
 
-/* ── Responsive ──────────────────────────────────────────── */
+/* ── Empty state ────────────────────────────────────────────────────── */
 
-@media (max-width: 600px) {
-  body { padding: 12px; }
-  .gauges { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-  .gauge-ring { width: 100px; height: 100px; }
-  .gauge-center .pct { font-size: 22px; }
-  .money-grid { grid-template-columns: 1fr; }
-}
-
-/* ── Empty state ─────────────────────────────────────────── */
-.empty {
+.empty-state {
+  padding: 64px 24px;
   text-align: center;
-  padding: 48px 24px;
-  color: var(--text2);
-  font-size: 16px;
+  color: var(--text-2);
+  background: var(--bg-card);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius);
+}
+.empty-state .e-title { font-size: 16px; color: var(--text); margin-bottom: 6px; }
+.empty-state .e-sub   { font-size: 13px; color: var(--text-2); }
+.empty-state a { color: var(--accent); text-decoration: none; }
+.empty-state a:hover { color: var(--text); }
+
+/* ── Footer ─────────────────────────────────────────────────────────── */
+
+footer {
+  margin-top: 32px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  body { padding: 18px 16px 40px; }
+  .header { gap: 12px; }
+  .brand .plan { font-size: 22px; }
+  .cards { grid-template-columns: 1fr; gap: 10px; }
+  .money-card { grid-template-columns: 1fr; gap: 14px; }
+  .card-stat .pct { font-size: 30px; }
 }
 `;
 
@@ -394,6 +473,18 @@ function _esc(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// Single severity classifier for the entire UI. Both the headline %
+// colour and the card stripe + bar tint route through this — they
+// must agree, otherwise a card looks "warn"-yellow while its bar
+// glows green.
+function severityFor(pct, projected) {
+  var p = projected != null && projected > pct ? projected : pct;
+  if (p >= 100 || pct >= 95) return 'risk';
+  if (p >= 85)               return 'over';
+  if (p >= 65)               return 'warn';
+  return 'ok';
 }
 
 function renderDashboard() {
@@ -459,19 +550,6 @@ function renderDashboard() {
     return '$' + Math.round(v / 1000) + 'k';
   }
 
-  function pctColor(p) {
-    if (p >= 90) return 'var(--red)';
-    if (p >= 75) return 'var(--orange)';
-    if (p >= 50) return 'var(--yellow)';
-    return 'var(--blue)';
-  }
-
-  function projColor(p) {
-    if (p > 100) return 'var(--red)';
-    if (p >= 80) return 'var(--yellow)';
-    return 'var(--green)';
-  }
-
   function calcPace(pct, resetAt, windowMs) {
     if (!resetAt || pct === null) return null;
     const remaining = resetAt - d.now;
@@ -480,271 +558,202 @@ function renderDashboard() {
     if (elapsed < 0.02) return null;
     const projected = Math.min(Math.round(pct / elapsed), 999);
     const paceRatio = pct / (elapsed * 100);
-    let glyph, color;
-    if (paceRatio < 0.85) { glyph = '↘'; color = 'var(--green)'; }
-    else if (paceRatio <= 1.15) { glyph = '→'; color = 'var(--text2)'; }
-    else { glyph = '↗'; color = projected > 100 ? 'var(--red)' : 'var(--yellow)'; }
-    return { projected, glyph, color, elapsed, paceRatio };
+    let glyph, paceWord;
+    if (paceRatio < 0.85)       { glyph = '↘'; paceWord = 'under'; }
+    else if (paceRatio <= 1.15) { glyph = '→'; paceWord = 'on'; }
+    else                        { glyph = '↗'; paceWord = 'over'; }
+    return { projected, glyph, paceWord, elapsed, paceRatio };
   }
 
-  // ── Gauge SVG ──────────────────────────────────────────
-  function gaugeRing(pct, projected, size) {
-    const r = (size - 12) / 2;
-    const c = size / 2;
-    const circ = 2 * Math.PI * r;
-    const offset = circ * (1 - pct / 100);
-    const color = pctColor(pct);
+  // ── Top: header + status pill ──────────────────────────
+  const USAGE_URL = 'https://claude.ai/settings/usage';
+  const isRateLimited = DATA.data && DATA.data.apiError === 'rate-limited';
+  const agoSec = Math.max(0, Math.floor((d.now - d.fetchedAt) / 1000));
+  // Buckets: <60s -> seconds; <60m -> minutes; <24h -> hours; else days.
+  // Avoids the "1612m ago" weirdness when a tab has been open all day.
+  const agoStr = agoSec < 60
+    ? agoSec + 's ago'
+    : agoSec < 3600
+      ? Math.floor(agoSec / 60) + 'm ago'
+      : agoSec < 86400
+        ? Math.floor(agoSec / 3600) + 'h ago'
+        : Math.floor(agoSec / 86400) + 'd ago';
+  const pillClass = isRateLimited ? 'pill warn' : 'pill';
+  const pillText = isRateLimited
+    ? '<span class="dot"></span> rate-limited \\u00b7 retrying'
+    : '<span class="dot"></span> live \\u00b7 ' + agoStr;
 
-    let projArc = '';
-    if (projected !== null && projected > pct) {
-      const projPct = Math.min(projected, 100);
-      const projOffset = circ * (1 - projPct / 100);
-      projArc = '<circle class="proj-ring" cx="' + c + '" cy="' + c + '" r="' + r + '" '
-        + 'stroke="' + projColor(projected) + '" '
-        + 'stroke-dasharray="' + circ + '" '
-        + 'stroke-dashoffset="' + projOffset + '" />';
-    }
+  let html = '<main>';
+  html += '<header class="header">'
+    + '<div class="brand">'
+    +   '<span class="mark"></span>'
+    +   '<span class="plan">' + _esc(d.planName || 'Claude') + '</span>'
+    +   '<span class="tag">usage</span>'
+    + '</div>'
+    + '<div class="head-meta">'
+    +   '<span class="' + pillClass + '">' + pillText + '</span>'
+    +   '<a href="' + USAGE_URL + '" target="_blank" rel="noopener">view on claude.ai \\u2197</a>'
+    + '</div>'
+    + '</header>';
 
-    return '<svg viewBox="0 0 ' + size + ' ' + size + '">'
-      + '<circle class="bg-ring" cx="' + c + '" cy="' + c + '" r="' + r + '" />'
-      + projArc
-      + '<circle class="fg-ring" cx="' + c + '" cy="' + c + '" r="' + r + '" '
-      + 'stroke="' + color + '" '
-      + 'stroke-dasharray="' + circ + '" '
-      + 'stroke-dashoffset="' + offset + '" />'
-      + '</svg>';
+  // ── Banner: surfaces stale/rate-limited state above the cards ────
+  if (isRateLimited) {
+    html += '<div class="banner">'
+      + '<strong>Showing last-good values.</strong> '
+      + 'The usage API rate-limited the most recent fetch '
+      + '(' + fmtTime(d.fetchedAt) + '). Numbers will refresh once the '
+      + 'backoff window clears.'
+      + '</div>';
   }
 
-  // ── Header ─────────────────────────────────────────────
-  var USAGE_URL = 'https://claude.ai/settings/usage';
-  var isRateLimited = DATA.data.apiError === 'rate-limited';
-  var rlBadge = isRateLimited
-    ? ' &middot; <span style="color:var(--yellow)">\\u21BB rate-limited</span>'
-    : '';
-
-  let html = '<div class="header">'
-    + '<h1><span>Claude</span> Usage Dashboard</h1>'
-    + '<div class="meta">' + _esc(d.planName)
-    + ' &middot; fetched ' + fmtTime(d.fetchedAt)
-    + rlBadge
-    + ' &middot; <a href="' + USAGE_URL + '" target="_blank" style="color:var(--blue)">usage page \\u2197</a>'
-    + '</div></div>';
-
-  if (d.quotas.length === 0) {
-    html += '<div class="empty">No usage data available.'
-      + '<br><a href="' + USAGE_URL + '" target="_blank" style="color:var(--blue)">View usage on claude.ai \\u2197</a></div>';
+  if (d.quotas.length === 0 && !d.extraUsage) {
+    html += '<div class="empty-state">'
+      + '<div class="e-title">No usage data yet</div>'
+      + '<div class="e-sub">Once Claude Code reports activity, your quotas will appear here. '
+      + '<a href="' + USAGE_URL + '" target="_blank" rel="noopener">View usage on claude.ai</a>.'
+      + '</div></div></main>';
     app.innerHTML = html;
     return;
   }
 
-  // ── Gauge cards ────────────────────────────────────────
-  html += '<div class="gauges">';
+  // ── Cards ────────────────────────────────────────────
+  html += '<div class="cards">';
   for (const q of d.quotas) {
     const pace = calcPace(q.pct, q.resetAt, q.windowMs);
     const projected = pace ? pace.projected : null;
-    const ring = gaugeRing(q.pct, projected, 130);
+    const idealPct = pace ? Math.round(pace.elapsed * 100) : null;
+    const sev = severityFor(q.pct, projected);
 
-    let footer = '';
-    if (pace) {
-      footer += '<span class="pace-glyph" style="color:' + pace.color + '">' + pace.glyph + '</span> ';
-      footer += '<span style="color:' + projColor(pace.projected) + '">proj ' + pace.projected + '%</span><br>';
+    // Bar geometry: filled = min(pct, ideal); over = pct - ideal; proj = projected - pct.
+    // All three clamped to [0,100] so a 999% projected doesn't over-flow the track.
+    const cur = Math.max(0, Math.min(100, q.pct));
+    const ideal = idealPct == null ? null : Math.max(0, Math.min(100, idealPct));
+    const projC = projected == null ? null : Math.max(0, Math.min(100, projected));
+    const overPace = ideal != null && cur > ideal;
+    const fillEnd = overPace ? ideal : cur;
+    const overEnd = overPace ? cur : null;
+    const projStart = cur;
+    const projEnd = projC != null && projC > cur ? projC : null;
+
+    let bar = '<div class="bar sev-' + sev + '">';
+    bar += '<div class="bar-fill" style="width:' + fillEnd + '%"></div>';
+    if (overEnd != null) {
+      bar += '<div class="bar-over" style="left:' + ideal + '%;width:' + (overEnd - ideal) + '%"></div>';
     }
+    if (projEnd != null) {
+      bar += '<div class="bar-proj" style="left:' + projStart + '%;width:' + (projEnd - projStart) + '%"></div>';
+    }
+    if (ideal != null) {
+      bar += '<div class="bar-ideal" style="left:' + ideal + '%"></div>';
+    }
+    bar += '</div>';
+
+    // Stat row right side: glyph + projected. Glyph colour tracks
+    // pace direction (under = ok green, over = warn yellow, over+risk
+    // = red). The projection number itself is bright text-1 so the
+    // eye lands on the prediction, not the label.
+    let projHtml = '';
+    if (projected != null && pace) {
+      const glyphCls = pace.paceWord === 'over'
+        ? (sev === 'risk' ? 'glyph over risk' : 'glyph over')
+        : pace.paceWord === 'under' ? 'glyph under' : 'glyph';
+      projHtml = '<span class="proj">'
+        +   '<span class="' + glyphCls + '">' + pace.glyph + '</span>'
+        +   '<span><span class="label">proj</span> <span class="v">' + projected + '%</span></span>'
+        + '</span>';
+    } else if (projected != null) {
+      projHtml = '<span class="proj">'
+        +   '<span><span class="label">proj</span> <span class="v">' + projected + '%</span></span>'
+        + '</span>';
+    }
+
+    // Head: title plus the reset countdown (the most actionable
+    // number on the card, so it gets prime real estate top-right).
+    let headRight = '';
     if (q.resetAt && q.resetAt > d.now) {
-      const remaining = q.resetAt - d.now;
-      footer += 'resets in <span class="reset-val">' + fmt(remaining) + '</span>';
-      footer += '<br><span style="color:var(--text2)">' + fmtDate(q.resetAt) + '</span>';
+      headRight = '<span class="card-reset-head">resets in <span class="v">'
+        + fmt(q.resetAt - d.now) + '</span></span>';
     }
 
-    html += '<div class="gauge-card">'
-      + '<div class="label">' + q.label + '</div>'
-      + '<div class="gauge-ring">' + ring
-      + '<div class="gauge-center">'
-      + '<div class="pct" style="color:' + pctColor(q.pct) + '">' + q.pct + '%</div>'
-      + (projected !== null ? '<div class="proj">→ ' + projected + '%</div>' : '')
-      + '</div></div>'
-      + '<div class="gauge-footer">' + footer + '</div>'
-      + '</div>';
+    // Foot: absolute reset time on left, ideal-pace marker label on
+    // right when pace data exists. Both subtle — they're context for
+    // the eye that's already focused on the headline %.
+    let footLeft = q.resetAt ? fmtDate(q.resetAt) : '';
+    let footRight = (idealPct != null)
+      ? '<span class="ideal-label">ideal <span class="v">' + idealPct + '%</span></span>'
+      : '';
+    const footHtml = '<span>' + footLeft + '</span><span>' + footRight + '</span>';
+
+    html += '<section class="card sev-' + sev + '">'
+      + '<div class="card-head">'
+      +   '<span class="card-title">' + _esc(q.label) + '</span>'
+      +   headRight
+      + '</div>'
+      + '<div class="card-stat">'
+      +   '<span class="pct">' + q.pct + '<span class="pct-unit">%</span></span>'
+      +   projHtml
+      + '</div>'
+      + bar
+      + '<div class="card-foot">' + footHtml + '</div>'
+      + '</section>';
   }
   html += '</div>';
 
-  // ── Reset Timeline ─────────────────────────────────────
-  const resets = d.quotas
-    .filter(q => q.resetAt && q.resetAt > d.now)
-    .map(q => ({ id: q.id, label: q.label, at: q.resetAt, pct: q.pct }))
-    .sort((a, b) => a.at - b.at);
-
-  if (resets.length > 0) {
-    const earliest = d.now;
-    const latest = Math.max(...resets.map(r => r.at));
-    const span = latest - earliest;
-    const padPct = 6;
-
-    // Compute positions and push apart overlapping markers (min 8% gap)
-    const positions = resets.map(r => ({
-      ...r,
-      pos: padPct + ((r.at - earliest) / span) * (100 - 2 * padPct),
-    }));
-    for (let i = 1; i < positions.length; i++) {
-      if (positions[i].pos - positions[i - 1].pos < 8) {
-        positions[i].pos = positions[i - 1].pos + 8;
-      }
-    }
-
-    html += '<div class="panel"><h2>Reset Timeline</h2>';
-    html += '<div class="timeline-track"><div class="timeline-bar"></div>';
-    html += '<div class="timeline-now" style="left:' + padPct + '%"></div>';
-
-    for (const r of positions) {
-      const remaining = r.at - d.now;
-      const color = pctColor(r.pct);
-      html += '<div class="timeline-marker" style="left:' + r.pos + '%">'
-        + '<div class="tm-label" style="color:' + color + '">' + r.id + '</div>'
-        + '<div class="dot" style="background:' + color + '"></div>'
-        + '<div class="tm-time">' + fmt(remaining) + '</div>'
-        + '</div>';
-    }
-    html += '</div></div>';
-  }
-
-  // ── Pace Analysis ──────────────────────────────────────
-  const paceData = d.quotas
-    .map(q => ({ ...q, pace: calcPace(q.pct, q.resetAt, q.windowMs) }))
-    .filter(q => q.pace);
-
-  if (paceData.length > 0) {
-    html += '<div class="panel"><h2>Pace Analysis</h2>';
-    html += '<p style="font-size:12px;color:var(--text2);margin-bottom:14px">'
-      + 'Current usage vs ideal pace. The marker shows where you should be if consuming evenly.</p>';
-
-    for (const q of paceData) {
-      const idealPct = Math.round(q.pace.elapsed * 100);
-      const curPct = Math.min(q.pct, 100);
-      const projPct = Math.min(q.pace.projected, 100);
-      const color = pctColor(q.pct);
-      const isOver = q.pct > idealPct;
-
-      // Layer 1: dim fill (up to min(current, ideal) when over-pace, else full current)
-      const solidEnd = isOver ? idealPct : curPct;
-      var layers = '<div class="pace-bar-fill" style="width:' + solidEnd + '%;background:' + color + '"></div>';
-
-      // Layer 2: bright fill for over-consumed portion (ideal → current)
-      if (isOver) {
-        layers += '<div class="pace-bar-over" style="left:' + idealPct + '%;width:' + (curPct - idealPct) + '%;background:' + color + '"></div>';
-      }
-
-      // Layer 3: projected hatched fill (current → projected)
-      if (projPct > curPct) {
-        layers += '<div class="pace-bar-proj" style="left:' + curPct + '%;width:' + (projPct - curPct) + '%;background:' + color + ';opacity:0.35"></div>';
-      }
-
-      // Layer 4: ideal marker
-      layers += '<div class="pace-bar-marker" style="left:' + idealPct + '%"></div>';
-
-      html += '<div class="pace-row">'
-        + '<div class="pace-label">' + q.id + '</div>'
-        + '<div class="pace-bar-track">' + layers + '</div>'
-        + '<div class="pace-val" style="color:' + color + '">' + q.pct + '%</div>'
-        + '</div>';
-    }
-    html += '</div>';
-  }
-
-  // ── Extra Usage / Credit Balance ───────────────────────
+  // ── Extra usage / credit balance ─────────────────────────
   if (d.extraUsage) {
     const e = d.extraUsage;
-    const balance = e.creditGrant !== null ? Math.max(0, e.creditGrant - e.usedCredits) : null;
-    const balancePct = (balance !== null && e.creditGrant) ? Math.max(0, (balance / e.creditGrant) * 100) : 0;
-    const monthlyPct = e.monthlyLimit > 0 ? Math.min(100, (e.usedCredits / e.monthlyLimit) * 100) : 0;
+    const balance = e.creditGrant != null ? Math.max(0, e.creditGrant - e.usedCredits) : null;
+    const balancePct = (balance != null && e.creditGrant > 0)
+      ? Math.max(0, (balance / e.creditGrant) * 100) : 0;
+    const monthlyPct = e.monthlyLimit > 0
+      ? Math.min(100, (e.usedCredits / e.monthlyLimit) * 100) : 0;
+    const monthlySev = monthlyPct >= 90 ? 'risk' : monthlyPct >= 75 ? 'over' : monthlyPct > 0 ? 'warn' : 'ok';
+    const balSev = balancePct < 10 ? 'risk' : balancePct < 30 ? 'over' : balancePct < 60 ? 'warn' : 'ok';
 
-    // Project months remaining
     let monthsRemaining = null;
-    if (balance !== null && e.usedCredits > 0) {
-      const now = new Date(d.now);
-      const dayOfMonth = now.getDate();
-      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-      const dailyRate = e.usedCredits / Math.max(1, dayOfMonth - 1 + now.getHours() / 24);
+    if (balance != null && e.usedCredits > 0) {
+      const dt = new Date(d.now);
+      const dayOfMonth = dt.getDate();
+      const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+      const dailyRate = e.usedCredits / Math.max(1, dayOfMonth - 1 + dt.getHours() / 24);
       const monthlyProj = dailyRate * daysInMonth;
       if (monthlyProj > 0) monthsRemaining = Math.round(balance / monthlyProj * 10) / 10;
     }
 
-    html += '<div class="panel"><h2>Extra Usage &amp; Credit Balance</h2>';
-    html += '<div class="money-grid">';
+    const sevColorVar = function(s) { return 'var(--' + s + ')'; };
 
-    // Monthly usage
-    html += '<div class="money-stat">'
-      + '<div class="ms-label">Monthly Usage</div>'
-      + '<div class="ms-value" style="color:' + (monthlyPct >= 80 ? 'var(--red)' : monthlyPct > 0 ? 'var(--yellow)' : 'var(--green)') + '">'
-      + fmtMoney(e.usedCredits) + '</div>'
-      + '<div class="ms-sub">of ' + fmtMoney(e.monthlyLimit) + ' limit (' + Math.round(monthlyPct) + '%)</div>'
+    html += '<section class="money-card span">'
+      + '<div class="money-head">'
+      +   '<span class="title">Extra usage</span>'
+      +   '<span class="sub">' + Math.round(monthlyPct) + '% of monthly limit used</span>'
+      + '</div>'
+      + '<div class="money-stat">'
+      +   '<div class="ms-label">This month</div>'
+      +   '<div class="ms-value" style="color:' + sevColorVar(monthlySev) + '">' + fmtMoney(e.usedCredits) + '</div>'
+      +   '<div class="ms-sub">of ' + fmtMoney(e.monthlyLimit) + ' limit</div>'
       + '</div>';
 
-    // Balance
-    if (balance !== null) {
-      const balColor = balance < 10 ? 'var(--red)' : balance < 50 ? 'var(--yellow)' : 'var(--green)';
+    if (balance != null) {
       html += '<div class="money-stat">'
-        + '<div class="ms-label">Credit Balance</div>'
-        + '<div class="ms-value" style="color:' + balColor + '">' + fmtMoney(balance) + '</div>'
-        + '<div class="ms-sub">of ' + fmtMoney(e.creditGrant) + ' grant'
-        + (monthsRemaining !== null ? ' &middot; ~' + monthsRemaining + ' months at current pace' : '')
-        + '</div></div>';
-    }
-
-    // Grant remaining
-    if (balance !== null) {
-      html += '<div class="money-stat" style="grid-column:1/-1">'
-        + '<div class="ms-label">Credit Grant Remaining</div>'
-        + '<div class="balance-bar-track">'
-        + '<div class="balance-bar-fill" style="width:' + balancePct + '%;background:' + (balancePct < 20 ? 'var(--red)' : balancePct < 50 ? 'var(--yellow)' : 'var(--green)') + '"></div>'
-        + '</div>'
-        + '<div class="ms-sub" style="margin-top:6px">' + fmtMoney(balance) + ' remaining of ' + fmtMoney(e.creditGrant) + ' (' + Math.round(balancePct) + '%)</div>'
+        +   '<div class="ms-label">Credit balance</div>'
+        +   '<div class="ms-value" style="color:' + sevColorVar(balSev) + '">' + fmtMoney(balance) + '</div>'
+        +   '<div class="ms-sub">of ' + fmtMoney(e.creditGrant) + ' grant'
+        +     (monthsRemaining != null ? ' \\u00b7 ~' + monthsRemaining + ' mo at pace' : '')
+        +   '</div>'
+        + '</div>';
+      html += '<div class="money-bar">'
+        + '<div class="money-bar-fill" style="width:' + balancePct + '%;background:' + sevColorVar(balSev) + '"></div>'
         + '</div>';
     }
 
-    html += '</div></div>';
+    html += '</section>';
   }
 
-  // ── Quota Detail Table ─────────────────────────────────
-  html += '<div class="panel"><h2>Quota Details</h2>';
-  html += '<table style="width:100%;border-collapse:collapse;font-size:13px">';
-  html += '<tr style="color:var(--text2);text-align:left;border-bottom:1px solid var(--border)">'
-    + '<th style="padding:8px 12px">Quota</th>'
-    + '<th style="padding:8px 12px">Usage</th>'
-    + '<th style="padding:8px 12px">Projected</th>'
-    + '<th style="padding:8px 12px">Pace</th>'
-    + '<th style="padding:8px 12px">Window Elapsed</th>'
-    + '<th style="padding:8px 12px">Resets At</th>'
-    + '<th style="padding:8px 12px">Time Left</th>'
-    + '</tr>';
+  // ── Footer: single line, mono, dim. The pill in the header already
+  // tells the user the freshness; the footer just records exact time. ──
+  html += '<footer>fetched ' + new Date(d.fetchedAt).toLocaleString() + '</footer>';
 
-  for (const q of d.quotas) {
-    const pace = calcPace(q.pct, q.resetAt, q.windowMs);
-    const remaining = q.resetAt ? Math.max(0, q.resetAt - d.now) : null;
-    const elapsed = pace ? Math.round(pace.elapsed * 100) : null;
-
-    html += '<tr style="border-bottom:1px solid var(--border)">'
-      + '<td style="padding:8px 12px;font-weight:600">' + q.label + '</td>'
-      + '<td style="padding:8px 12px;color:' + pctColor(q.pct) + '">' + q.pct + '%</td>'
-      + '<td style="padding:8px 12px;color:' + (pace ? projColor(pace.projected) : 'var(--text2)') + '">'
-      + (pace ? pace.projected + '%' : '—') + '</td>'
-      + '<td style="padding:8px 12px">'
-      + (pace ? '<span style="color:' + pace.color + '">' + pace.glyph + '</span> '
-        + (pace.paceRatio < 0.85 ? 'under' : pace.paceRatio <= 1.15 ? 'on' : 'over') + ' pace' : '—')
-      + '</td>'
-      + '<td style="padding:8px 12px">' + (elapsed !== null ? elapsed + '%' : '—') + '</td>'
-      + '<td style="padding:8px 12px;color:var(--cyan)">'
-      + (q.resetAt ? fmtDate(q.resetAt) : '—') + '</td>'
-      + '<td style="padding:8px 12px">'
-      + (remaining !== null ? fmt(remaining) : '—') + '</td>'
-      + '</tr>';
-  }
-  html += '</table></div>';
-
-  // ── Footer ─────────────────────────────────────────────
-  html += '<div style="text-align:center;padding:16px;color:var(--text2);font-size:11px">'
-    + 'Generated at ' + new Date(d.now).toLocaleString()
-    + ' &middot; Data fetched at ' + new Date(d.fetchedAt).toLocaleString()
-    + '</div>';
-
+  html += '</main>';
   app.innerHTML = html;
 }
 `;
