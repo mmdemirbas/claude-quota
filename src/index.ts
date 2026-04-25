@@ -56,8 +56,9 @@ async function main(): Promise<void> {
       getCreditGrant(),
     ]);
 
-    // Merge credit grant into extra usage data
-    if (usage?.extraUsage && creditGrant !== null) {
+    // Merge credit grant into extra usage data — only meaningful when
+    // extras are actually enabled (the disabled variant is just a flag).
+    if (usage?.extraUsage?.enabled && creditGrant !== null) {
       usage.extraUsage = { ...usage.extraUsage, creditGrant };
     }
 

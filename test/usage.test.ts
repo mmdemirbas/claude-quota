@@ -126,9 +126,10 @@ describe('parseExtraUsage', () => {
 
   test('defaults used_credits to 0 when absent', () => {
     const result = parseExtraUsage({ is_enabled: true, monthly_limit: 500 });
-    assert.equal(result?.usedCredits, 0);
-    assert.equal(result?.monthlyLimit, 5);
-    assert.equal(result?.creditGrant, null);
+    assert.ok(result?.enabled);
+    assert.equal(result.usedCredits, 0);
+    assert.equal(result.monthlyLimit, 5);
+    assert.equal(result.creditGrant, null);
   });
 
   // Hardening: non-numeric or negative monetary fields must not leak
@@ -161,7 +162,7 @@ describe('parseExtraUsage', () => {
       monthly_limit: 500,
       used_credits: 'bad' as unknown as number,
     });
-    assert.ok(result);
+    assert.ok(result?.enabled);
     assert.equal(result.usedCredits, 0);
     assert.equal(result.monthlyLimit, 5);
   });
@@ -172,8 +173,16 @@ describe('parseExtraUsage', () => {
       monthly_limit: 500,
       used_credits: -100,
     });
-    assert.ok(result);
+    assert.ok(result?.enabled);
     assert.equal(result.usedCredits, 0);
+  });
+
+  // C2: the disabled state is now narrowly typed — no monthlyLimit/
+  // usedCredits/creditGrant fields. A caller that forgot the
+  // `enabled === true` narrowing used to silently divide 0/0.
+  test('disabled state has no numeric fields', () => {
+    const result = parseExtraUsage({ is_enabled: false });
+    assert.deepEqual(result, { enabled: false });
   });
 });
 

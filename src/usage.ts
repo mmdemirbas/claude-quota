@@ -345,7 +345,7 @@ function parseMinorUnits(v: unknown): number | null {
 /** Exported for testing. */
 export function parseExtraUsage(raw: UsageApiResponse['extra_usage']): ExtraUsageData | null {
   if (raw == null) return null; // API didn't return extra_usage at all
-  if (!raw.is_enabled) return { enabled: false, monthlyLimit: 0, usedCredits: 0, creditGrant: null };
+  if (!raw.is_enabled) return { enabled: false };
 
   // API returns values in cents; convert to dollars. A non-numeric field
   // (e.g. schema drift or MITM-injected garbage) must not produce NaN

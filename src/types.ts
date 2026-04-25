@@ -63,13 +63,20 @@ export interface UsageData {
   fetchedAt?: number;
 }
 
-export interface ExtraUsageData {
-  enabled: boolean;
-  monthlyLimit: number;
-  usedCredits: number;
-  /** Total prepaid credit grant in dollars. null when unknown. */
-  creditGrant: number | null;
-}
+/**
+ * Discriminated on `enabled` so the disabled state cannot accidentally
+ * carry zero values that a caller might divide. The renderer narrows
+ * via `if (extra.enabled) { … }` before reading the numeric fields.
+ */
+export type ExtraUsageData =
+  | { enabled: false }
+  | {
+      enabled: true;
+      monthlyLimit: number;
+      usedCredits: number;
+      /** Total prepaid credit grant in dollars. null when unknown. */
+      creditGrant: number | null;
+    };
 
 /** Profile API response from /api/oauth/profile */
 export interface ProfileApiResponse {
