@@ -491,12 +491,20 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
   // Derive plan name from profile cache (live API tier) → credentials (bootstrap fallback).
   // Profile API's organization.rate_limit_tier is the authoritative source; credential
   // rateLimitTier can be stale after plan upgrades until Claude Code refreshes the OAuth token.
-  const livePlanName = (): string | null => {
+  //
+  // `skipCreds` is set on the cache-hit hot path: every render that doesn't
+  // need a fresh fetch would otherwise pay a Keychain `security` invocation
+  // (~50–200 ms) just to re-confirm the plan name we already have. The
+  // profile-cache lookup is cheap (a single 0o600 file read), so we still
+  // prefer it; we just don't fall back to credentials when the cache hit
+  // already carried a plan name.
+  const livePlanName = (skipCreds = false): string | null => {
     const profile = readProfileCache(now);
     if (profile?.rateLimitTier || profile?.organizationType) {
       const fromProfile = getPlanName(profile.organizationType ?? '', profile.rateLimitTier);
       if (fromProfile) return fromProfile;
     }
+    if (skipCreds) return null;
     const creds = readCredentials(now);
     return creds ? getPlanName(creds.subscriptionType, creds.rateLimitTier) : null;
   };
@@ -505,9 +513,16 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
   if (!opts?.forceRefresh) {
     const cached = readCache(now);
     if (cached) {
-      // Always re-derive planName so plan changes are reflected immediately.
-      const fresh = livePlanName();
+      // Re-derive planName from the profile cache only. The cached planName
+      // already came from a successful fetch's credentials/profile; falling
+      // back to readCredentials here would Keychain-hit on every tick.
+      const fresh = livePlanName(/* skipCreds */ true);
       if (fresh) cached.data = { ...cached.data, planName: fresh };
+      else if (!cached.data.planName) {
+        // Cache somehow predates the planName field — last-resort full lookup.
+        const full = livePlanName();
+        if (full) cached.data = { ...cached.data, planName: full };
+      }
       return cached;
     }
   }
