@@ -13,10 +13,18 @@ import { pluginDir } from './paths.js';
 import { warn } from './log.js';
 
 const CACHE_TTL_MS = 2 * 60_000;           // 2 min hard TTL (force re-fetch)
-const CACHE_SOFT_TTL_MS = 45_000;          // 45s soft TTL (serve stale + background refresh)
+const CACHE_SOFT_TTL_MS = 90_000;          // 90s soft TTL (serve stale + background refresh).
+                                            //   Doubled from 45s — background refresh fires
+                                            //   half as often, which roughly halves the per-
+                                            //   user request rate without changing the user-
+                                            //   visible freshness much (the line still rolls
+                                            //   over within the 2 min hard TTL).
 const CACHE_FAILURE_TTL_MS = 15_000;        // 15s for failures
 const CACHE_RATE_LIMITED_BASE_MS = 60_000;   // 60s base for 429 backoff
-const CACHE_RATE_LIMITED_MAX_MS = 5 * 60_000;
+const CACHE_RATE_LIMITED_MAX_MS = 10 * 60_000; // cap the dwell at 10 min so an aggressive
+                                                // sustained 429 doesn't hold the line indefinitely.
+const CACHE_RATE_LIMITED_JITTER = 0.2;       // ±20% backoff jitter to keep parallel instances
+                                              //   from re-converging onto the same retry boundary.
 const FETCH_COORDINATION_MS = 20_000;       // 20s — if fetcher hasn't written by now, it died
 const PROFILE_CACHE_TTL_MS = 24 * 60 * 60_000; // 24h — org UUID rarely changes
 const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — balance changes only on top-up
@@ -90,6 +98,24 @@ function hydrateDates(data: UsageData): UsageData {
   };
 }
 
+/**
+ * 429 backoff with multiplicative jitter.
+ *
+ * Without jitter, every instance with the same `rateLimitedCount`
+ * computes the same retry boundary — they wake up together, fetch
+ * together, and re-trigger the same 429 in lockstep. Multiplying the
+ * deterministic backoff by a uniform value in [1 - J, 1 + J] keeps
+ * concurrent retriers desynchronised.
+ *
+ * Exported for testing.
+ */
+export function jitteredBackoff(rateLimitedCount: number, rng: () => number = Math.random): number {
+  const exp = Math.pow(2, Math.max(0, rateLimitedCount - 1));
+  const base = Math.min(CACHE_RATE_LIMITED_BASE_MS * exp, CACHE_RATE_LIMITED_MAX_MS);
+  const factor = 1 + (rng() * 2 - 1) * CACHE_RATE_LIMITED_JITTER;
+  return Math.round(base * factor);
+}
+
 function readCache(now: number): { data: UsageData; isStale: boolean } | null {
   try {
     const raw = readJsCache(getCachePath());
@@ -98,6 +124,10 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
 
     // Handle rate-limit backoff
     if (cache.data.apiError === 'rate-limited' && cache.rateLimitedCount) {
+      // retryAfterUntil is preferred — set either from the server's
+      // Retry-After header or as a jittered count-derived backoff at
+      // write time. The fallback below covers caches written before the
+      // jitter migration and stays bounded by CACHE_RATE_LIMITED_MAX_MS.
       const backoff = Math.min(
         CACHE_RATE_LIMITED_BASE_MS * Math.pow(2, Math.max(0, cache.rateLimitedCount - 1)),
         CACHE_RATE_LIMITED_MAX_MS,
@@ -664,9 +694,15 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
     const { prevCount, lastGoodData } = recoverCacheState(getCachePath());
 
     if (isRateLimit) {
+      const newCount = prevCount + 1;
       writeCache(failure, now, {
-        rateLimitedCount: prevCount + 1,
-        retryAfterUntil: result.retryAfterSec ? now + result.retryAfterSec * 1000 : undefined,
+        rateLimitedCount: newCount,
+        // Prefer the server's Retry-After when present; otherwise derive
+        // a jittered backoff so parallel instances coming off the same
+        // count don't all retry at exactly the same instant.
+        retryAfterUntil: result.retryAfterSec
+          ? now + result.retryAfterSec * 1000
+          : now + jitteredBackoff(newCount),
         lastGoodData,
       });
       const data = lastGoodData

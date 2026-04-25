@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock } from '../src/usage.js';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock, jitteredBackoff } from '../src/usage.js';
 import { writeFileSecure } from '../src/secure-fs.js';
 import type { CacheFile, UsageData } from '../src/types.js';
 
@@ -301,5 +301,41 @@ describe('acquireFetchLock', { skip: !isPosix }, () => {
     const peer = acquireFetchLock(Date.now(), lockPath);
     assert.equal(peer, null, 'peer must not steal a fresh lock');
     fs.unlinkSync(lockPath);
+  });
+});
+
+describe('jitteredBackoff', () => {
+  // Bounds: with ±20% jitter and base = min(60s * 2^(n-1), 10min):
+  //   count=1 → base 60s, range [48s, 72s]
+  //   count=2 → base 120s, range [96s, 144s]
+  //   count=10 (saturated) → base 600s, range [480s, 720s]
+
+  test('count=1 lands within ±20% of 60s', () => {
+    for (const r of [0, 0.25, 0.5, 0.75, 1]) {
+      const ms = jitteredBackoff(1, () => r);
+      assert.ok(ms >= 48_000 && ms <= 72_000, `count=1 r=${r} → ${ms}ms outside [48s, 72s]`);
+    }
+  });
+
+  test('count=2 lands within ±20% of 120s', () => {
+    for (const r of [0, 0.5, 1]) {
+      const ms = jitteredBackoff(2, () => r);
+      assert.ok(ms >= 96_000 && ms <= 144_000, `count=2 r=${r} → ${ms}ms outside [96s, 144s]`);
+    }
+  });
+
+  test('count=10 caps at 10 min ±20% (does not blow past the saturation cap)', () => {
+    const ms = jitteredBackoff(10, () => 1);
+    assert.ok(ms <= 720_000, `saturated upper bound exceeded: ${ms}`);
+  });
+
+  test('produces different values across calls — avoids retry lockstep', () => {
+    // Pin the rng to two distinct values; result must differ.
+    assert.notEqual(jitteredBackoff(1, () => 0), jitteredBackoff(1, () => 1));
+  });
+
+  test('count=1 with mid-jitter returns the deterministic base', () => {
+    // r=0.5 → factor = 1 → result == base, no jitter applied.
+    assert.equal(jitteredBackoff(1, () => 0.5), 60_000);
   });
 });
