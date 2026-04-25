@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState } from '../src/usage.js';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock } from '../src/usage.js';
 import { writeFileSecure } from '../src/secure-fs.js';
 import type { CacheFile, UsageData } from '../src/types.js';
 
@@ -241,5 +241,65 @@ describe('recoverCacheState', () => {
   test('returns zeros when the cache file is malformed JSON', () => {
     writeFileSecure(cachePath, 'var DATA=garbage;');
     assert.deepEqual(recoverCacheState(cachePath), { prevCount: 0, lastGoodData: undefined });
+  });
+});
+
+// Multi-instance coordination: the bump-then-fetch flow used to race —
+// two parents that read the cache within the same millisecond both
+// fetched. The O_EXCL lock makes "is anyone fetching right now" an
+// atomic question.
+const isPosix = process.platform !== 'win32';
+describe('acquireFetchLock', { skip: !isPosix }, () => {
+  let dir: string;
+  let lockPath: string;
+
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-quota-lock-'));
+    lockPath = path.join(dir, '.fetch.lock');
+  });
+  after(() => {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+  beforeEach(() => {
+    try { fs.rmSync(lockPath, { force: true }); } catch { /* ignore */ }
+  });
+
+  test('first acquisition succeeds, second concurrent attempt is refused', () => {
+    const now = Date.now();
+    const a = acquireFetchLock(now, lockPath);
+    assert.ok(a, 'first acquire should succeed');
+    const b = acquireFetchLock(now, lockPath);
+    assert.equal(b, null, 'second acquire while held must return null');
+    a.release();
+  });
+
+  test('after release, the lock is acquirable again', () => {
+    const now = Date.now();
+    const a = acquireFetchLock(now, lockPath);
+    assert.ok(a);
+    a.release();
+    const b = acquireFetchLock(now, lockPath);
+    assert.ok(b, 'lock should be acquirable after release');
+    b.release();
+  });
+
+  test('stale lock (older than coordination window) is reclaimed', () => {
+    // Pre-create a stale lock by hand.
+    fs.writeFileSync(lockPath, '99999', { mode: 0o600 });
+    const stalePast = (Date.now() - 60_000) / 1000;
+    fs.utimesSync(lockPath, stalePast, stalePast);
+
+    const a = acquireFetchLock(Date.now(), lockPath);
+    assert.ok(a, 'a stale lock should be reclaimed');
+    a.release();
+  });
+
+  test('fresh lock (within coordination window) is NOT reclaimed', () => {
+    // A lock created right now should NOT be reclaimable by a peer.
+    fs.writeFileSync(lockPath, '99999', { mode: 0o600 });
+
+    const peer = acquireFetchLock(Date.now(), lockPath);
+    assert.equal(peer, null, 'peer must not steal a fresh lock');
+    fs.unlinkSync(lockPath);
   });
 });

@@ -360,6 +360,80 @@ function writeCacheFile(filePath: string, content: string): void {
   writeFileSecure(filePath, content);
 }
 
+// ── Fetch lock ──────────────────────────────────────────────────────────────
+//
+// The bump-then-fetch coordination is best-effort: two instances that race
+// past readCache within the same millisecond both see the un-bumped cache
+// and both fetch. With several Claude windows open this fans out into a
+// handful of simultaneous API hits — the fastest path to a 429.
+//
+// The lock file below makes acquisition atomic: O_EXCL means only one
+// process succeeds; the rest fall back to serving the cached value (or a
+// failure record). Stale locks (process killed mid-fetch) are reclaimed
+// after FETCH_COORDINATION_MS so a crash never wedges the cache forever.
+
+function getFetchLockPath(): string {
+  return path.join(pluginDir(), '.fetch.lock');
+}
+
+/**
+ * Try to acquire the fetch lock. Returns a handle on success (callers
+ * MUST release it via releaseFetchLock once the fetch completes); null
+ * if another instance already holds the lock or the lock is fresh.
+ *
+ * A stale lock (mtime older than FETCH_COORDINATION_MS) is reclaimed
+ * — that path covers the case where the prior holder was killed
+ * before it could release.
+ *
+ * `lockPathOverride` is provided for tests; production callers leave
+ * it undefined and the path resolves under the plugin dir.
+ *
+ * Exported for testing.
+ */
+export function acquireFetchLock(now: number, lockPathOverride?: string): { release: () => void } | null {
+  const lockPath = lockPathOverride ?? getFetchLockPath();
+  // Only auto-create the plugin dir on the production path. Tests pass
+  // a path inside their own tmp dir and don't want a side-effect on the
+  // real ~/.claude/plugins/claude-quota location.
+  if (lockPathOverride === undefined) {
+    try {
+      fs.mkdirSync(pluginDir(), { recursive: true });
+    } catch { /* ignore */ }
+  }
+
+  const tryCreate = (): number | null => {
+    try {
+      return fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL, 0o600);
+    } catch {
+      return null;
+    }
+  };
+
+  let fd = tryCreate();
+  if (fd === null) {
+    // Lock exists. Check if it's stale.
+    try {
+      const st = fs.lstatSync(lockPath);
+      if (!st.isSymbolicLink() && now - st.mtimeMs >= FETCH_COORDINATION_MS) {
+        // Reclaim. unlink + recreate; if any step races a winning peer
+        // the second tryCreate fails and we yield to them.
+        try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+        fd = tryCreate();
+      }
+    } catch { /* lock vanished between failure and stat — try once more */ }
+  }
+  if (fd === null) return null;
+
+  try { fs.writeSync(fd, String(process.pid)); } catch { /* ignore */ }
+  fs.closeSync(fd);
+
+  return {
+    release: () => {
+      try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+    },
+  };
+}
+
 // ── Profile & credit grant caching ────────────────────────────────────────
 
 interface ProfileData {
@@ -544,11 +618,30 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
   const planName = livePlanName();
   if (!planName) return none; // API user
 
-  // Bump cache timestamp to prevent parallel instances from also fetching
+  // Try to acquire the cross-instance fetch lock. If we don't get it,
+  // another claude-quota process is already fetching — re-read the
+  // cache (it may have just landed) and serve whatever's there. This is
+  // the main rate-limit safety valve: with N parallel windows open we
+  // emit at most one upstream call instead of N.
+  const lock = acquireFetchLock(now);
+  if (!lock) {
+    const cached = readCache(now);
+    if (cached) return cached;
+    // No cache and no lock — yield without firing a duplicate request.
+    return none;
+  }
+
+  // We hold the lock. Bump the cache so parallel instances reading
+  // through readCache see a fresh-looking entry and don't pile on with
+  // their own background-refresh spawns.
   bumpCacheTimestamp(now);
 
-  // Fetch
-  const result = await fetchApi(creds.accessToken);
+  let result;
+  try {
+    result = await fetchApi(creds.accessToken);
+  } finally {
+    lock.release();
+  }
 
   if (!result.data) {
     const isRateLimit = result.error === 'rate-limited';
