@@ -265,14 +265,25 @@ function collectBody(req: ClientRequest, res: IncomingMessage): Promise<{ body: 
  * Outcome of an HTTP exchange before per-endpoint interpretation. The
  * shared request helper resolves to one of these; each fetcher then
  * casts the body to its specific JSON shape (or applies its own
- * status-code semantics).
+ * status-code semantics). Exported for testing.
  */
-type RequestOutcome =
+export type RequestOutcome =
   | { kind: 'ok'; body: string }
   | { kind: 'overflow' }                                  // body exceeded MAX_RESPONSE_BODY
   | { kind: 'http'; statusCode: number; headers: IncomingMessage['headers'] }
   | { kind: 'network' }
   | { kind: 'timeout' };
+
+/**
+ * Test seam: requestApi can be handed a custom `https.request`-shaped
+ * function and an explicit timeout. Production callers omit both.
+ */
+export interface RequestApiOpts {
+  /** Override the absolute-deadline timeout. Defaults to API_TIMEOUT_MS. */
+  timeoutMs?: number;
+  /** Override the transport. Defaults to https.request. */
+  httpsRequest?: typeof https.request;
+}
 
 /**
  * Issue a GET to api.anthropic.com and resolve once one of:
@@ -285,10 +296,18 @@ type RequestOutcome =
  * The absolute deadline is essential for slow-loris tolerance:
  * `req.timeout` is per-activity, so a server that trickles bytes slower
  * than the interval can hold the connection open indefinitely. The
- * setTimeout below destroys the request after API_TIMEOUT_MS regardless.
+ * setTimeout below destroys the request after `timeoutMs` regardless.
+ *
+ * Exported for testing (R1 regression test).
  */
-function requestApi(urlPath: string, accessToken: string): Promise<RequestOutcome> {
+export function requestApi(
+  urlPath: string,
+  accessToken: string,
+  opts?: RequestApiOpts,
+): Promise<RequestOutcome> {
   return new Promise((resolve) => {
+    const timeoutMs = opts?.timeoutMs ?? API_TIMEOUT_MS;
+    const requestFn = opts?.httpsRequest ?? https.request;
     let settled = false;
     let deadline: NodeJS.Timeout | undefined;
     const finish = (v: RequestOutcome): void => {
@@ -298,7 +317,7 @@ function requestApi(urlPath: string, accessToken: string): Promise<RequestOutcom
       resolve(v);
     };
 
-    const req = https.request({
+    const req = requestFn({
       hostname: 'api.anthropic.com',
       path: urlPath,
       method: 'GET',
@@ -308,7 +327,7 @@ function requestApi(urlPath: string, accessToken: string): Promise<RequestOutcom
         'User-Agent': 'claude-quota/0.2',
       },
       minVersion: MIN_TLS_VERSION,
-      timeout: API_TIMEOUT_MS,
+      timeout: timeoutMs,
     }, (res) => {
       void collectBody(req, res).then(({ body, overflowed }) => {
         if (overflowed) { finish({ kind: 'overflow' }); return; }
@@ -319,7 +338,7 @@ function requestApi(urlPath: string, accessToken: string): Promise<RequestOutcom
 
     req.on('error', () => finish({ kind: 'network' }));
     req.on('timeout', () => { req.destroy(); finish({ kind: 'timeout' }); });
-    deadline = setTimeout(() => { req.destroy(); finish({ kind: 'timeout' }); }, API_TIMEOUT_MS);
+    deadline = setTimeout(() => { req.destroy(); finish({ kind: 'timeout' }); }, timeoutMs);
     req.end();
   });
 }
