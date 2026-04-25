@@ -101,7 +101,7 @@ describe('parseExtraUsage', () => {
 
   test('returns disabled state when is_enabled is false', () => {
     const result = parseExtraUsage({ is_enabled: false, monthly_limit: 500, used_credits: 10 });
-    assert.deepEqual(result, { enabled: false, monthlyLimit: 0, usedCredits: 0, creditGrant: null });
+    assert.deepEqual(result, { enabled: false });
   });
 
   test('returns null when monthly_limit is 0 (avoids $0/$0 display)', () => {

@@ -307,6 +307,30 @@ describe('extra usage rendering', () => {
     assert.ok(line3.includes('●$:'), '●$: label missing');
     assert.ok(line3.includes('$0'), '$0 spend missing');
   });
+
+  // U1: the disabled placeholder used to be 4 visible chars (' ○$:'),
+  // then 9 (added " off"). At full tier neighbouring quota segments
+  // are 32 visible chars, so the disabled stub left an obvious gap.
+  // Now padded to the active tier's width so all segments align.
+  test('disabled extras placeholder pads to the active tier width (full tier)', () => {
+    const disabled: UsageData = {
+      ...baseUsage,
+      // Force line 3 to render: opus is non-null so hasLine3 is true.
+      opus: 5, opusResetAt: in3d,
+      extraUsage: { enabled: false },
+    };
+    const { line3 } = capture({ stdin: baseStdin, usage: disabled, git: null, now, columns: 200 });
+    // ' ○$:' + ' ' + ' off' = 9 chars; full-tier padding adds 23 trailing spaces.
+    assert.ok(line3.includes('○$:'), 'disabled label still rendered');
+    assert.ok(line3.includes('off'), 'off marker still rendered');
+    // The trailing spaces are between 'off' and the line end (or the
+    // syncHint). Asserting the full line ends in spaces past the marker
+    // is enough — neighbour quotas still occupy 32 chars apiece.
+    const offIdx = line3.lastIndexOf('off');
+    assert.ok(offIdx >= 0);
+    const tail = line3.slice(offIdx + 3);
+    assert.ok(/^\s+/.test(tail), `expected trailing padding after "off", got: "${tail}"`);
+  });
 });
 
 // ── credit grant balance ──────────────────────────────────────────────────

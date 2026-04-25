@@ -273,6 +273,14 @@ function monthElapsedFraction(now: number): number {
 export type DetailLevel = 'full' | 'no-reset' | 'no-pace' | 'compact';
 const DETAIL_LEVELS: DetailLevel[] = ['full', 'no-reset', 'no-pace', 'compact'];
 
+/** Per-tier visible width of a quota / extra-usage segment. */
+const TIER_SEGMENT_WIDTH: Record<DetailLevel, number> = {
+  full: 32,
+  'no-reset': 25,
+  'no-pace': 19,
+  compact: 9,
+};
+
 // ── Adaptive line builder ──────────────────────────────────────────────────
 
 const SEP = dim(' │ '); // 3 visible chars
@@ -434,8 +442,12 @@ export function formatBalance(creditGrant: number, usedCredits: number): string 
 function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): string | null {
   if (!usage.extraUsage) return null;
   if (!usage.extraUsage.enabled) {
-    // 9 visible chars matches the compact-tier width of every other segment.
-    return `${dim(' ○$:')} ${dim(' off')}`;
+    // Pad the placeholder to the active tier's width so the segment
+    // aligns with neighbouring quota segments (which all render at
+    // exactly TIER_SEGMENT_WIDTH[detail] visible chars).
+    const placeholder = `${dim(' ○$:')} ${dim(' off')}`; // 9 visible chars
+    const target = TIER_SEGMENT_WIDTH[detail];
+    return placeholder + ' '.repeat(Math.max(0, target - 9));
   }
 
   const { usedCredits, monthlyLimit, creditGrant } = usage.extraUsage;
