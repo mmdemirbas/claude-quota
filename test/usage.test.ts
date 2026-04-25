@@ -1,6 +1,11 @@
-import { test, describe } from 'node:test';
+import { test, describe, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { clamp, parseDate, parseExtraUsage, rehydrateDate } from '../src/usage.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState } from '../src/usage.js';
+import { writeFileSecure } from '../src/secure-fs.js';
+import type { CacheFile, UsageData } from '../src/types.js';
 
 describe('clamp', () => {
   test('passes through values in range', () => {
@@ -169,5 +174,72 @@ describe('parseExtraUsage', () => {
     });
     assert.ok(result);
     assert.equal(result.usedCredits, 0);
+  });
+});
+
+// Regression: a non-429 failure (HTTP 500, network, timeout) used to call
+// writeCache without preserving lastGoodData / rateLimitedCount. That:
+//   1) reset the exponential-backoff counter so the next 429 started over,
+//   2) blanked lastGoodData so the rate-limit display had nothing to show.
+// recoverCacheState now reads both fields out of the prior cache and the
+// failure path passes them back into writeCache.
+describe('recoverCacheState', () => {
+  let dir: string;
+  let cachePath: string;
+
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-quota-cache-'));
+    cachePath = path.join(dir, 'data.js');
+  });
+  after(() => {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+  beforeEach(() => {
+    try { fs.rmSync(cachePath, { force: true }); } catch { /* ignore */ }
+  });
+
+  function writeCacheFile(c: CacheFile): void {
+    writeFileSecure(cachePath, `var DATA=${JSON.stringify(c)};`);
+  }
+
+  const goodUsage: UsageData = {
+    planName: 'Max',
+    fiveHour: 42, fiveHourResetAt: null,
+    sevenDay: 17, sevenDayResetAt: null,
+    sonnet: null, sonnetResetAt: null,
+    opus: null, opusResetAt: null,
+    extraUsage: null,
+  };
+
+  test('returns zeros when no cache exists', () => {
+    assert.deepEqual(recoverCacheState(cachePath), { prevCount: 0, lastGoodData: undefined });
+  });
+
+  test('returns prior count + lastGoodData from a rate-limited cache entry', () => {
+    const failure: UsageData = { ...goodUsage, fiveHour: null, sevenDay: null, apiUnavailable: true, apiError: 'rate-limited' };
+    writeCacheFile({ data: failure, timestamp: Date.now(), rateLimitedCount: 3, lastGoodData: goodUsage });
+    const r = recoverCacheState(cachePath);
+    assert.equal(r.prevCount, 3);
+    assert.equal(r.lastGoodData?.fiveHour, 42);
+  });
+
+  test('falls back to cache.data when lastGoodData is absent and the cache is healthy', () => {
+    writeCacheFile({ data: goodUsage, timestamp: Date.now(), rateLimitedCount: 0 });
+    const r = recoverCacheState(cachePath);
+    assert.equal(r.prevCount, 0);
+    assert.equal(r.lastGoodData?.fiveHour, 42);
+  });
+
+  test('does not synthesize lastGoodData from a failed cache entry', () => {
+    // A pure failure cache (apiUnavailable=true, no lastGoodData) should not
+    // be treated as a good baseline.
+    const failure: UsageData = { ...goodUsage, fiveHour: null, sevenDay: null, apiUnavailable: true };
+    writeCacheFile({ data: failure, timestamp: Date.now() });
+    assert.equal(recoverCacheState(cachePath).lastGoodData, undefined);
+  });
+
+  test('returns zeros when the cache file is malformed JSON', () => {
+    writeFileSecure(cachePath, 'var DATA=garbage;');
+    assert.deepEqual(recoverCacheState(cachePath), { prevCount: 0, lastGoodData: undefined });
   });
 });

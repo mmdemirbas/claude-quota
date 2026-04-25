@@ -133,6 +133,29 @@ function readCache(now: number): { data: UsageData; isStale: boolean } | null {
   }
 }
 
+/**
+ * Pull rate-limit counter + last-good snapshot out of an on-disk cache file
+ * for use when writing a *failure* entry. Both fields must be preserved
+ * across consecutive failures (rate-limited or not) so that:
+ *   - the next 429 keeps escalating exponential backoff instead of restarting
+ *   - the rate-limit display can keep showing the prior good values
+ *
+ * Exported for testing.
+ */
+export function recoverCacheState(cachePath: string): { prevCount: number; lastGoodData: UsageData | undefined } {
+  try {
+    const rawJs = readJsCache(cachePath);
+    if (!rawJs) return { prevCount: 0, lastGoodData: undefined };
+    const prev: CacheFile = JSON.parse(rawJs);
+    return {
+      prevCount: prev.rateLimitedCount ?? 0,
+      lastGoodData: prev.lastGoodData ?? (!prev.data.apiUnavailable ? prev.data : undefined),
+    };
+  } catch {
+    return { prevCount: 0, lastGoodData: undefined };
+  }
+}
+
 function writeCache(data: UsageData, timestamp: number, opts?: Partial<CacheFile>): void {
   const cache: CacheFile = { data, timestamp, ...opts };
   delete cache.fetchStartedAt; // fetch completed — clear the coordination lock
@@ -480,18 +503,14 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
       apiError: result.error,
     };
 
+    // Recover last good data and prior backoff count from the cache. Both
+    // are preserved across non-429 failures too — without this, a single
+    // intermittent 500 between two 429s wiped lastGoodData (so the user
+    // saw "no data" instead of last-good values) and reset the rate-limit
+    // counter (defeating exponential backoff escalation).
+    const { prevCount, lastGoodData } = recoverCacheState(getCachePath());
+
     if (isRateLimit) {
-      // Recover last good data and preserve backoff state across invocations
-      let prevCount = 0;
-      let lastGoodData: UsageData | undefined;
-      try {
-        const rawJs = readJsCache(getCachePath());
-        if (rawJs) {
-          const prev: CacheFile = JSON.parse(rawJs);
-          prevCount = prev.rateLimitedCount ?? 0;
-          lastGoodData = prev.lastGoodData ?? (!prev.data.apiUnavailable ? prev.data : undefined);
-        }
-      } catch { /* no prior cache — first rate-limit */ }
       writeCache(failure, now, {
         rateLimitedCount: prevCount + 1,
         retryAfterUntil: result.retryAfterSec ? now + result.retryAfterSec * 1000 : undefined,
@@ -503,7 +522,9 @@ export async function getUsage(opts?: { forceRefresh?: boolean }): Promise<{ dat
       return { data, isStale: false };
     }
 
-    writeCache(failure, now);
+    // Non-429 failure: keep the prior counter and last-good snapshot intact
+    // so a 429 that follows still finds them.
+    writeCache(failure, now, { rateLimitedCount: prevCount, lastGoodData });
     return { data: failure, isStale: false };
   }
 
