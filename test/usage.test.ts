@@ -311,6 +311,36 @@ describe('acquireFetchLock', { skip: !isPosix }, () => {
     assert.equal(peer, null, 'peer must not steal a fresh lock');
     fs.unlinkSync(lockPath);
   });
+
+  // C1: identity-checked release. Before this fix, release() did
+  // unlinkSync(lockPath) without confirming the file on disk was the
+  // same one we acquired. A holder delayed past FETCH_COORDINATION_MS
+  // could thus delete a peer's freshly-acquired lock.
+  test('release() leaves a peer-reclaimed lock alone', () => {
+    const now = Date.now();
+    const a = acquireFetchLock(now, lockPath);
+    assert.ok(a, 'acquire should succeed');
+
+    // Simulate a peer reclaiming after the window elapsed: replace the
+    // lock content with the peer's "token" by hand. acquireFetchLock
+    // would do this atomically via unlink+create; the contract we care
+    // about here is that release() doesn't blow away the new content.
+    fs.writeFileSync(lockPath, 'peer-token', { mode: 0o600 });
+
+    a.release();
+    assert.ok(fs.existsSync(lockPath), 'release must not unlink a lock owned by a peer');
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), 'peer-token',
+      'peer\'s lock contents must survive release()');
+    fs.unlinkSync(lockPath);
+  });
+
+  test('release() unlinks our own lock', () => {
+    const a = acquireFetchLock(Date.now(), lockPath);
+    assert.ok(a);
+    assert.ok(fs.existsSync(lockPath));
+    a.release();
+    assert.ok(!fs.existsSync(lockPath), 'release on our own lock must unlink');
+  });
 });
 
 describe('jitteredBackoff', () => {

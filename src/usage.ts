@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as https from 'node:https';
+import { randomBytes } from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type {
@@ -458,12 +459,21 @@ function getCreditGrantLockPath(): string {
 
 /**
  * Try to acquire the fetch lock. Returns a handle on success (callers
- * MUST release it via releaseFetchLock once the fetch completes); null
- * if another instance already holds the lock or the lock is fresh.
+ * MUST release it via the returned `release()` once the fetch
+ * completes); null if another instance already holds the lock and the
+ * lock is fresh.
  *
- * A stale lock (mtime older than FETCH_COORDINATION_MS) is reclaimed
- * — that path covers the case where the prior holder was killed
- * before it could release.
+ * A stale lock (mtime older than FETCH_COORDINATION_MS) is reclaimed —
+ * that path covers the case where the prior holder was killed before
+ * it could release.
+ *
+ * Identity-checked release: at acquire we write a per-acquisition
+ * token (PID + 8 random bytes) into the lock file; release reads it
+ * back and only unlinks when it matches. Without this, a holder
+ * delayed past FETCH_COORDINATION_MS by a suspended event loop could
+ * have its lock reclaimed by a peer, then on resume call unlink and
+ * delete the *peer's* lock — handing the orphaned lock back to the
+ * very thundering herd we're guarding against.
  *
  * `lockPathOverride` is provided for tests; production callers leave
  * it undefined and the path resolves under the plugin dir.
@@ -504,15 +514,29 @@ export function acquireFetchLock(now: number, lockPathOverride?: string): { rele
   }
   if (fd === null) return null;
 
+  // Per-acquisition token, used by release() to verify the on-disk
+  // lock is still ours. Random bytes prevent a peer that happened to
+  // pick the same PID after a fork-restart from impersonating us.
+  const token = `${process.pid}.${randomBytes(8).toString('hex')}`;
+
   // Belt-and-suspenders: openSync's mode is masked by umask. Force 0o600
   // explicitly so an unusual umask can't leave the lock world-readable.
   try { fs.fchmodSync(fd, 0o600); } catch { /* ignore */ }
-  try { fs.writeSync(fd, String(process.pid)); } catch { /* ignore */ }
+  try { fs.writeSync(fd, token); } catch { /* ignore */ }
   fs.closeSync(fd);
 
   return {
     release: () => {
-      try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+      try {
+        // Verify the lock contents still match our token before
+        // unlinking. If a peer reclaimed the lock as stale and wrote
+        // its own token, leave the file alone.
+        const onDisk = fs.readFileSync(lockPath, 'utf8');
+        if (onDisk === token) fs.unlinkSync(lockPath);
+      } catch {
+        // File missing (already reclaimed and re-released) or any
+        // other read/unlink error: nothing to do, nothing to clean up.
+      }
     },
   };
 }
