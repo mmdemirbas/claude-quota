@@ -530,17 +530,20 @@ export function render(input: RenderInput): void {
 
   let line1: string;
 
-  if (rows === 1 && usage && !usage.apiUnavailable) {
-    // Single-row mode: model + compact ctx (no bar) + compact 5h + compact 7d.
-    // Both ctx and quota bars are omitted; compact (label + pct) format is used
-    // throughout to fit as many data points as possible on a single line.
-    // Git info is omitted in favour of quota percentages.
+  if (rows === 1) {
+    // Single-row mode: model + compact ctx (no bar) + compact 5h + compact 7d
+    // when usage is available. Both ctx and quota bars are omitted; compact
+    // (label + pct) format is used throughout. Git info is dropped in favour
+    // of quota percentages. When usage is unavailable, line 1 collapses to
+    // just model + compact ctx so the layout still matches the no-bars,
+    // no-git intent documented in CLAUDE.md.
     const ctxCompact = `${dim('ctx:')} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
+    const showQuotas = !!usage && !usage.apiUnavailable;
     const parts: (string | null)[] = [
       c(CYAN, modelText),
       ctxCompact,
-      renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, 'compact'),
-      renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, 'compact'),
+      showQuotas ? renderQuota(' 5h:', usage.fiveHour, usage.fiveHourResetAt, FIVE_HOUR_MS, now, 'compact') : null,
+      showQuotas ? renderQuota(' 7d:', usage.sevenDay, usage.sevenDayResetAt, SEVEN_DAY_MS, now, 'compact') : null,
     ];
     line1 = truncate(
       parts.filter((p): p is string => p !== null).join(SEP),

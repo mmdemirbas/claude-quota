@@ -759,13 +759,28 @@ describe('height-adaptive edge cases', () => {
     assert.ok(!line1.includes('7d:'), '7d should not appear');
   });
 
-  test('rows=1 when usage is null falls back to ctx-bar format (no quota info)', () => {
-    // Without usage data the single line uses the multi-row line-1 format
-    // (ctx bar present) rather than the compact quota format.
-    const { line1 } = capture({ stdin: baseStdin, usage: null, git: null, now, rows: 1 });
+  test('rows=1 with usage=null collapses to compact model + ctx (no bar, no git)', () => {
+    // CLAUDE.md spec: rows=1 emits model + compact ctx% + 5h% + 7d%, never
+    // a bar or git block. The previous fallback path delegated to the
+    // multi-row builder when usage was null, leaking a bar onto line 1.
+    const { line1 } = capture({ stdin: baseStdin, usage: null, git: { branch: 'main', isDirty: false }, now, rows: 1 });
+    assert.ok(line1.includes('sonnet'), 'model name must appear');
     assert.ok(line1.includes('ctx:'), 'ctx label must appear');
-    assert.ok(line1.includes('█'), 'ctx bar should be present when usage is null');
-    assert.ok(!line1.includes('5h:'), '5h should not appear without usage data');
+    assert.ok(!line1.includes('█'), 'ctx bar must NOT appear at rows=1 (compact only)');
+    assert.ok(!line1.includes('5h:'), '5h should not appear without usage');
+    assert.ok(!line1.includes('git:'), 'git block must not appear at rows=1');
+  });
+
+  test('rows=1 with apiUnavailable usage also stays compact (no bar)', () => {
+    const failed: UsageData = {
+      ...baseUsage,
+      fiveHour: null, fiveHourResetAt: null,
+      sevenDay: null, sevenDayResetAt: null,
+      sonnet: null, sonnetResetAt: null,
+      apiUnavailable: true,
+    };
+    const { line1 } = capture({ stdin: baseStdin, usage: failed, git: null, now, rows: 1 });
+    assert.ok(!line1.includes('█'), 'ctx bar must not appear when API is unavailable at rows=1');
   });
 
   test('rows=2 appends rate-limited indicator to the merged quota line', () => {
