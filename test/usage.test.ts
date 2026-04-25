@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock, jitteredBackoff } from '../src/usage.js';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock, jitteredBackoff, parseRetryAfter } from '../src/usage.js';
 import { writeFileSecure } from '../src/secure-fs.js';
 import type { CacheFile, UsageData } from '../src/types.js';
 
@@ -346,5 +346,43 @@ describe('jitteredBackoff', () => {
   test('count=1 with mid-jitter returns the deterministic base', () => {
     // r=0.5 → factor = 1 → result == base, no jitter applied.
     assert.equal(jitteredBackoff(1, () => 0.5), 60_000);
+  });
+});
+
+// C3: Retry-After header parsing — RFC 7231 §7.1.3 allows either
+// delta-seconds or HTTP-date. The previous code only handled integers
+// and silently dropped the date form, falling back to count-derived
+// jittered backoff. Now both forms produce a usable seconds value.
+describe('parseRetryAfter', () => {
+  // 2026-04-25T12:00:00Z — fixed reference for date-form tests.
+  const NOW = Date.parse('2026-04-25T12:00:00Z');
+
+  test('returns undefined for missing/empty values', () => {
+    assert.equal(parseRetryAfter(undefined, NOW), undefined);
+    assert.equal(parseRetryAfter('', NOW), undefined);
+    assert.equal(parseRetryAfter('   ', NOW), undefined);
+  });
+
+  test('parses delta-seconds form', () => {
+    assert.equal(parseRetryAfter('120', NOW), 120);
+    assert.equal(parseRetryAfter('0', NOW), 0);
+    assert.equal(parseRetryAfter(' 60 ', NOW), 60);
+  });
+
+  test('parses RFC 1123 HTTP-date form', () => {
+    // 2026-04-25T12:02:00Z = 120 seconds past NOW.
+    assert.equal(parseRetryAfter('Sat, 25 Apr 2026 12:02:00 GMT', NOW), 120);
+  });
+
+  test('clamps a past HTTP-date to 0', () => {
+    // 2026-04-25T11:55:00Z = 5 minutes ago.
+    assert.equal(parseRetryAfter('Sat, 25 Apr 2026 11:55:00 GMT', NOW), 0);
+  });
+
+  test('returns undefined for unparseable values (does not silently parse "21" out of "21 Oct...")', () => {
+    // The bug we want to avoid: parseInt('21 Oct 2026...') === 21,
+    // which would have meant "retry in 21 seconds" — wrong by months.
+    assert.equal(parseRetryAfter('not a date or number', NOW), undefined);
+    assert.equal(parseRetryAfter('21 banana', NOW), undefined);
   });
 });

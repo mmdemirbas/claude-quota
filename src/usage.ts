@@ -292,7 +292,7 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
           const error: ApiError = code === 429 ? 'rate-limited' : `http-${code}`;
           const retryRaw = res.headers['retry-after'];
           const retryVal = Array.isArray(retryRaw) ? retryRaw[0] : retryRaw;
-          const retryAfterSec = retryVal ? parseInt(retryVal, 10) || undefined : undefined;
+          const retryAfterSec = parseRetryAfter(retryVal, Date.now());
           // Surface auth failures distinctly so a revoked or rotated token
           // does not present as a generic "API down". 429 stays quiet —
           // rate-limits are handled with UI backoff, not warnings.
@@ -331,6 +331,37 @@ function fetchApi(accessToken: string): Promise<{ data: UsageApiResponse | null;
 export function clamp(v: number | undefined | null): number | null {
   if (v == null || !Number.isFinite(v)) return null;
   return Math.round(Math.max(0, Math.min(100, v)));
+}
+
+/**
+ * Parse a `Retry-After` header value (RFC 7231 §7.1.3).
+ *
+ * Two accepted formats:
+ *   - delta-seconds   →   "120"
+ *   - HTTP-date       →   "Wed, 21 Oct 2026 07:28:00 GMT"
+ *
+ * Returns the delay in seconds (rounded to integer, never negative)
+ * or undefined for missing/malformed values. Exported for testing.
+ */
+export function parseRetryAfter(raw: string | undefined, now: number): number | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+
+  // Integer-seconds form. Reject non-numeric strings explicitly so
+  // "Wed, 21 Oct 2026..." doesn't parse as 0 via parseInt's prefix
+  // tolerance — it would, since "21" is a valid prefix of "21 Oct".
+  if (/^\d+$/.test(trimmed)) {
+    const sec = parseInt(trimmed, 10);
+    return Number.isFinite(sec) ? sec : undefined;
+  }
+
+  // HTTP-date form. Date.parse handles RFC 1123 / RFC 850 / asctime
+  // shapes. Convert to seconds-from-now, clamped to ≥ 0 (a date in
+  // the past means "you can retry now").
+  const parsed = Date.parse(trimmed);
+  if (!Number.isFinite(parsed)) return undefined;
+  return Math.max(0, Math.round((parsed - now) / 1000));
 }
 
 /** Exported for testing. */
