@@ -214,18 +214,18 @@ main { max-width: 1100px; margin: 0 auto; }
 .card:hover { border-color: var(--border-2); }
 
 /* Severity stripe on the left — drawn via ::before so we don't need to
- * paint the entire border in colour (looked too loud). */
+ * paint the entire border in colour (looked too loud). The colour is
+ * set per-card via the --card-color CSS variable, computed from the
+ * card's "concern" % so the tone matches the bar fill. */
 .card::before {
   content: '';
   position: absolute;
   left: -1px; top: -1px; bottom: -1px;
   width: 3px;
-  background: transparent;
+  background: var(--card-color, transparent);
   border-radius: var(--radius) 0 0 var(--radius);
+  opacity: 0.85;
 }
-.card.sev-warn::before { background: var(--warn); }
-.card.sev-over::before { background: var(--over); }
-.card.sev-risk::before { background: var(--risk); }
 
 .card-head {
   display: flex;
@@ -340,15 +340,13 @@ main { max-width: 1100px; margin: 0 auto; }
   z-index: 3;
 }
 
-/* Quota bar: severity-tinted fill + trail. */
-.bar.sev-ok    .bar-fill, .bar.sev-ok    .bar-proj { background: var(--ok); }
-.bar.sev-warn  .bar-fill, .bar.sev-warn  .bar-proj { background: var(--warn); }
-.bar.sev-over  .bar-fill, .bar.sev-over  .bar-proj { background: var(--over); }
-.bar.sev-risk  .bar-fill, .bar.sev-risk  .bar-proj { background: var(--risk); }
+/* Quota bar: fill + trail colour set per-card via inline style so the
+ * tone matches the actual %. The bar.bar-time variant overrides this
+ * with a neutral grey, since time-elapsed is context, not an alarm. */
 
 /* Time bar: neutral. The reader reads it as "context", not alarm. */
 .bar.bar-time .bar-fill {
-  background: var(--text-3);
+  background: var(--text-3) !important;
   opacity: 0.7;
 }
 
@@ -451,34 +449,32 @@ function _esc(s) {
     .replace(/'/g, '&#39;');
 }
 
-// Pace-aware severity classifier. Routes the card stripe and the bar
-// tint through one rule so they cannot disagree.
+// Continuous colour ramp: 0% → mint, 50% → amber, 100% → red. HSL hue
+// interpolation gives a smooth gradient through yellow at the midpoint
+// without the muddy mid-tones RGB interpolation produces. Saturation
+// and lightness are held roughly constant so the perceived brightness
+// doesn't oscillate as hue shifts — only the temperature changes.
 //
-// Two principles:
-//  (a) Current % is real, projection is extrapolation. Hard alarms come
-//      from the actual reading; projections only escalate when pace is
-//      directionally bad ('over').
-//  (b) Early in the window (low elapsed), projections are statistical
-//      noise — a 17% reading at 15% elapsed extrapolates to ~110% but
-//      tells us almost nothing. We treat such projections as advisory
-//      only, not alarm-worthy.
+// 5% and 10% land at slightly different greens; 60% and 70% at
+// distinguishable yellow-oranges. The reader extracts severity from
+// the colour temperature alone, no need for tier thresholds.
+function colorForPct(pct) {
+  var p = Math.max(0, Math.min(100, pct));
+  // Hue: 150 (mint) → 60 (yellow) → 0 (red).
+  var h = p <= 50 ? 150 - (p / 50) * 90 : 60 - ((p - 50) / 50) * 60;
+  return 'hsl(' + h.toFixed(0) + ', 70%, 62%)';
+}
+
+// "Concern" colour for the card stripe and any non-bar accents. When
+// the user is over pace AND the projection is meaningfully higher
+// than current, we colour by the projection — that's the value that
+// will hit reality. Otherwise we colour by the current value.
 //
-// paceWord: 'under' | 'on' | 'over' | undefined (no pace data).
-function severityFor(pct, projected, paceWord) {
-  // Hard limits on current usage — these are real, not extrapolated.
-  if (pct >= 95) return 'risk';
-  if (pct >= 85) return 'over';
-  if (pct >= 75) return 'warn';
-  // Projection-driven severity kicks in only when the user is actively
-  // burning faster than time. Under/on pace at low current % stays
-  // green even if a small-sample projection extrapolates to a scary
-  // number — that projection won't survive a few more data points.
-  if (paceWord === 'over' && projected != null) {
-    if (projected >= 100) return 'risk';
-    if (projected >= 90)  return 'over';
-    if (projected >= 75)  return 'warn';
-  }
-  return 'ok';
+// paceWord: 'under' | 'on' | 'over' | undefined.
+function concernColor(pct, projected, paceWord) {
+  var concern = (paceWord === 'over' && projected != null && projected > pct)
+    ? projected : pct;
+  return colorForPct(concern);
 }
 
 function renderDashboard() {
@@ -636,19 +632,26 @@ function renderDashboard() {
     const projected = pace ? pace.projected : null;
     const elapsedPct = pace ? Math.round(pace.elapsed * 100) : null;
     const paceWord = pace ? pace.paceWord : undefined;
-    const sev = severityFor(q.pct, projected, paceWord);
 
     const cur = Math.max(0, Math.min(100, q.pct));
     const projC = projected == null ? null : Math.max(0, Math.min(100, projected));
     const projTrailEnd = projC != null && projC > cur ? projC : null;
 
+    // Continuous colour ramp: each bar segment takes the colour of the %
+    // it represents, so 5% reads as a different green than 25%, which
+    // reads as different yellow-green than 60%. Inline styles because
+    // every card draws a unique tone — too many to enumerate as classes.
+    const fillColor = colorForPct(cur);
+    const projFillColor = projTrailEnd != null ? colorForPct(projTrailEnd) : null;
+    const stripeColor = concernColor(cur, projC, paceWord);
+
     // Quota bar: solid fill, dim trail to projected, solid line at
     // current, dashed line at estimated.
-    let quotaBar = '<div class="bar sev-' + sev + '">';
-    quotaBar += '<div class="bar-fill" style="width:' + cur + '%"></div>';
+    let quotaBar = '<div class="bar">';
+    quotaBar += '<div class="bar-fill" style="width:' + cur + '%;background:' + fillColor + '"></div>';
     if (projTrailEnd != null) {
       quotaBar += '<div class="bar-proj" style="left:' + cur
-        + '%;width:' + (projTrailEnd - cur) + '%"></div>';
+        + '%;width:' + (projTrailEnd - cur) + '%;background:' + projFillColor + '"></div>';
     }
     quotaBar += '<div class="bar-now" style="left:' + cur + '%"></div>';
     if (projC != null) {
@@ -699,7 +702,7 @@ function renderDashboard() {
       foot = '<div class="card-foot empty">no active window</div>';
     }
 
-    html += '<section class="card sev-' + sev + '">'
+    html += '<section class="card" style="--card-color:' + stripeColor + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">' + _esc(q.label) + '</span>'
       +   projAside
@@ -744,18 +747,21 @@ function renderDashboard() {
     const paceWord = projectedPct == null ? undefined
       : monthlyPct > elapsedPct + 5 ? 'over'
       : monthlyPct < elapsedPct - 5 ? 'under' : 'on';
-    const sev = severityFor(Math.round(monthlyPct), projectedPct, paceWord);
 
     const cur = Math.round(monthlyPct);
     const projC = projectedPct == null ? null : Math.max(0, Math.min(100, projectedPct));
     const projTrailEnd = projC != null && projC > cur ? projC : null;
 
+    const fillColor = colorForPct(cur);
+    const projFillColor = projTrailEnd != null ? colorForPct(projTrailEnd) : null;
+    const stripeColor = concernColor(cur, projC, paceWord);
+
     // Spend bar
-    let spendBar = '<div class="bar sev-' + sev + '">';
-    spendBar += '<div class="bar-fill" style="width:' + cur + '%"></div>';
+    let spendBar = '<div class="bar">';
+    spendBar += '<div class="bar-fill" style="width:' + cur + '%;background:' + fillColor + '"></div>';
     if (projTrailEnd != null) {
       spendBar += '<div class="bar-proj" style="left:' + cur + '%;width:'
-        + (projTrailEnd - cur) + '%"></div>';
+        + (projTrailEnd - cur) + '%;background:' + projFillColor + '"></div>';
     }
     spendBar += '<div class="bar-now" style="left:' + cur + '%"></div>';
     if (projC != null) {
@@ -779,7 +785,7 @@ function renderDashboard() {
       + '<span class="v-2">' + fmtDate(monthEndAt) + '</span>'
       + '</span>';
 
-    html += '<section class="card money sev-' + sev + '">'
+    html += '<section class="card money" style="--card-color:' + stripeColor + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">Extra usage</span>'
       +   projAside
