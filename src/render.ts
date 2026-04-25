@@ -329,6 +329,31 @@ function dashLinkGlyph(): string {
 }
 
 /**
+ * Single source of truth for the API-status hint glyph and its
+ * with-leading-space variant, used everywhere the status surfaces:
+ *   - rows=1 right edge (compact path)
+ *   - rows≥2 syncHint slot (right edge of line 2/3 quotas)
+ *   - the standalone apiUnavailable line (no quotas to share with)
+ *
+ * `padded` is "<sep><glyph>" (visible width 2) for the right-edge
+ * hint slot; `glyph` alone is for the standalone line. Both use
+ * the same color so the three presentations stay in lockstep.
+ *
+ * Returns empty strings + width 0 when usage is healthy.
+ */
+function apiStatusHint(usage: UsageData | null): { glyph: string; padded: string; width: number } {
+  if (usage?.apiError === 'rate-limited') {
+    const padded = dim(' ⟳');
+    return { glyph: dim('⟳'), padded, width: visibleLength(padded) };
+  }
+  if (usage?.apiUnavailable) {
+    const padded = c(YELLOW, ' ⚠');
+    return { glyph: c(YELLOW, '⚠'), padded, width: visibleLength(padded) };
+  }
+  return { glyph: '', padded: '', width: 0 };
+}
+
+/**
  * Render the git portion of line 1.
  * Returns null when project is absent or detail is 'compact'.
  */
@@ -564,15 +589,7 @@ export function render(input: RenderInput): void {
   // discoverable on narrow terminals too.
   const link = ` ${dashLinkGlyph()}`;
 
-  // API status hint shown at the right edge of the line.
-  // ' ⟳' (2 visible chars) for rate-limited; ' ⚠' for any other failure.
-  // Reserved here so rows=1 + rows≥2 can both append it at the proper width.
-  const apiHint = usage?.apiError === 'rate-limited'
-    ? dim(' ⟳')
-    : usage?.apiUnavailable
-      ? c(YELLOW, ' ⚠')
-      : '';
-  const apiHintW = visibleLength(apiHint);
+  const status = apiStatusHint(usage ?? null);
 
   if (rows === 1) {
     // Single-row mode: model + link + compact ctx + compact 5h + compact 7d
@@ -590,8 +607,8 @@ export function render(input: RenderInput): void {
     ];
     line1 = truncate(
       parts.filter((p): p is string => p !== null).join(SEP),
-      cols - apiHintW,
-    ) + apiHint;
+      cols - status.width,
+    ) + status.padded;
   } else {
     // Multi-row mode: model + link + ctx bar + project/git.
     // Git degrades via detail tiers; the link is part of the col-0 prefix
@@ -622,11 +639,12 @@ export function render(input: RenderInput): void {
   //   Line 3: time │  7d bar pct% pace reset │  ●$ bar val  pace limit
 
   if (usage && !usage.apiUnavailable) {
-    const syncHint = usage.apiError === 'rate-limited' ? dim(' ⟳') : '';
-    // visibleLength(syncHint) = 2 when rate-limited, 0 otherwise.
-    // fitLine is called with cols reduced by this amount so that appending
-    // syncHint never pushes the output line past the terminal width.
-    const syncW = visibleLength(syncHint);
+    // syncHint slot at the right edge of line 2/3. Only rate-limited can
+    // reach this branch (apiUnavailable falls through to the standalone
+    // line below); apiStatusHint still works as a single source of truth
+    // because its rate-limited path is the same as the old syncHint.
+    const syncHint = status.padded;
+    const syncW = status.width;
 
     if (rows === 2) {
       // Flatten all quotas onto a single line.
@@ -647,8 +665,8 @@ export function render(input: RenderInput): void {
           cols - syncW,
         );
         console.log(`${R}${line2}${syncHint}`);
-      } else if (usage.apiError === 'rate-limited') {
-        console.log(`${R}${dim('⟳')}`);
+      } else if (status.glyph) {
+        console.log(`${R}${status.glyph}`);
       }
     } else {
       // rows ≥ 3: standard two-account-line layout.
@@ -682,21 +700,17 @@ export function render(input: RenderInput): void {
           cols - syncW,
         );
         console.log(`${R}${line3}${syncHint}`);
-      } else if (!planText && !line2HasContent && usage.apiError === 'rate-limited') {
-        console.log(`${R}${dim('⟳')}`);
+      } else if (!planText && !line2HasContent && status.glyph) {
+        console.log(`${R}${status.glyph}`);
       }
     }
   } else if (usage?.apiUnavailable) {
-    // Match the single-line and syncHint presentations: bare glyph,
-    // dim ⟳ for rate-limited, yellow ⚠ for everything else. The
-    // "usage:" prefix used to make this branch read differently from
-    // the other three places the same status surfaces — now they all
-    // look the same.
-    const hint = usage.apiError === 'rate-limited' ? dim('⟳') : c(YELLOW, '⚠');
+    // Standalone status line. Same glyph + colour as the rows=1 hint
+    // and the syncHint slot — single source of truth via apiStatusHint.
     if (planText) {
-      console.log(`${R}${c(CYAN, planText)}${dim(' │ ')}${hint}`);
+      console.log(`${R}${c(CYAN, planText)}${dim(' │ ')}${status.glyph}`);
     } else {
-      console.log(`${R}${hint}`);
+      console.log(`${R}${status.glyph}`);
     }
   } else if (planText) {
     console.log(`${R}${c(CYAN, planText)}`);
