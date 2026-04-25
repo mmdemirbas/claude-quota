@@ -427,11 +427,16 @@ export function formatBalance(creditGrant: number, usedCredits: number): string 
 /**
  * Render the extra (pay-as-you-go) usage segment.
  * Same tier widths as renderQuota; 'reset' slot holds the monthly limit instead.
- * Returns "○$:" (4 visible chars) when extra usage is disabled.
+ * The disabled state pads to the same compact-tier width (9 visible
+ * chars: " ○$:" + " " + "  off") so it slots into the existing column
+ * grid instead of drifting under the full-tier reset slot.
  */
 function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): string | null {
   if (!usage.extraUsage) return null;
-  if (!usage.extraUsage.enabled) return `${dim(' ○$:')}`;
+  if (!usage.extraUsage.enabled) {
+    // 9 visible chars matches the compact-tier width of every other segment.
+    return `${dim(' ○$:')} ${dim(' off')}`;
+  }
 
   const { usedCredits, monthlyLimit, creditGrant } = usage.extraUsage;
   const usedPct = Math.min(100, Math.round((usedCredits / monthlyLimit) * 100));
@@ -542,10 +547,22 @@ export function render(input: RenderInput): void {
   // discoverable on narrow terminals too.
   const link = ` ${dashLinkGlyph()}`;
 
+  // API status hint shown at the right edge of the line.
+  // ' ⟳' (2 visible chars) for rate-limited; ' ⚠' for any other failure.
+  // Reserved here so rows=1 + rows≥2 can both append it at the proper width.
+  const apiHint = usage?.apiError === 'rate-limited'
+    ? dim(' ⟳')
+    : usage?.apiUnavailable
+      ? c(YELLOW, ' ⚠')
+      : '';
+  const apiHintW = visibleLength(apiHint);
+
   if (rows === 1) {
     // Single-row mode: model + link + compact ctx + compact 5h + compact 7d
     // when usage is available. Bars omitted; compact (label + pct) format
     // throughout. Git info is dropped in favour of quota percentages.
+    // The rate-limit / API-down hint is appended on the right so the
+    // user sees the same status indicator they'd see at rows=3.
     const ctxCompact = `${dim('ctx:')} ${ctxColor(ctxPct)}${ctxPctStr}${R}`;
     const showQuotas = !!usage && !usage.apiUnavailable;
     const parts: (string | null)[] = [
@@ -556,8 +573,8 @@ export function render(input: RenderInput): void {
     ];
     line1 = truncate(
       parts.filter((p): p is string => p !== null).join(SEP),
-      cols,
-    );
+      cols - apiHintW,
+    ) + apiHint;
   } else {
     // Multi-row mode: model + link + ctx bar + project/git.
     // Git degrades via detail tiers; the link is part of the col-0 prefix

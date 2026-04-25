@@ -785,6 +785,42 @@ describe('height-adaptive edge cases', () => {
     assert.ok(!line1.includes('█'), 'ctx bar must not appear when API is unavailable at rows=1');
   });
 
+  // Consistency: at rows=1 the user should see the same API-status indicator
+  // they'd get at rows=3, so a rate-limit incident isn't invisible just
+  // because the terminal is short.
+  test('rows=1 surfaces ⟳ when the API is rate-limited', () => {
+    const rateLimited: UsageData = { ...baseUsage, apiError: 'rate-limited' };
+    const { line1 } = capture({ stdin: baseStdin, usage: rateLimited, git: null, now, rows: 1 });
+    assert.ok(line1.includes('⟳'), 'rate-limit indicator must appear on rows=1');
+  });
+
+  test('rows=1 surfaces ⚠ when the API is otherwise unavailable', () => {
+    const failed: UsageData = {
+      ...baseUsage,
+      fiveHour: null, sevenDay: null, sonnet: null,
+      apiUnavailable: true,
+      apiError: 'http-500',
+    };
+    const { line1 } = capture({ stdin: baseStdin, usage: failed, git: null, now, rows: 1 });
+    assert.ok(line1.includes('⚠'), 'failure indicator must appear on rows=1');
+  });
+
+  test('rows=1 with API hint never exceeds column width', () => {
+    const rateLimited: UsageData = { ...baseUsage, apiError: 'rate-limited' };
+    for (const columns of [25, 35, 47, 80, 120]) {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => lines.push(args.join(' '));
+      try {
+        render({ stdin: baseStdin, usage: rateLimited, git: null, now, rows: 1, columns });
+      } finally {
+        console.log = orig;
+      }
+      const v = vlen(lines[0] ?? '');
+      assert.ok(v <= columns, `rows=1 + ⟳ hint visible ${v} > ${columns}: "${lines[0]?.replace(/\x1b\[[0-9;]*m/g, '')}"`);
+    }
+  });
+
   test('rows=2 appends rate-limited indicator to the merged quota line', () => {
     const rateLimited: UsageData = { ...baseUsage, apiError: 'rate-limited' };
     const lines: string[] = [];
