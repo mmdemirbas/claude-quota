@@ -19,7 +19,12 @@ const CACHE_RATE_LIMITED_BASE_MS = 60_000;   // 60s base for 429 backoff
 const CACHE_RATE_LIMITED_MAX_MS = 5 * 60_000;
 const FETCH_COORDINATION_MS = 20_000;       // 20s — if fetcher hasn't written by now, it died
 const PROFILE_CACHE_TTL_MS = 24 * 60 * 60_000; // 24h — org UUID rarely changes
-const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — changes only on top-up
+const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — balance changes only on top-up
+// "No grant" is a much more stable state — most users never enable extra
+// credits, and refetching every 10 min produces ~144 pointless API calls a
+// day. Hold the null result for 24 h instead; a freshly-purchased grant
+// will surface within a day, which is well inside the user's tolerance.
+const CREDIT_GRANT_NULL_TTL_MS = 24 * 60 * 60_000;
 const API_TIMEOUT_MS = 15_000;
 
 function getCachePath(): string {
@@ -389,7 +394,8 @@ function readCreditGrantCache(now: number): { hit: true; value: number | null } 
     const raw = readJsCache(getCreditGrantCachePath());
     if (!raw) return null;
     const cache: CreditGrantCacheFile = JSON.parse(raw);
-    if (now - cache.timestamp < CREDIT_GRANT_CACHE_TTL_MS) {
+    const ttl = cache.creditGrant === null ? CREDIT_GRANT_NULL_TTL_MS : CREDIT_GRANT_CACHE_TTL_MS;
+    if (now - cache.timestamp < ttl) {
       return { hit: true, value: cache.creditGrant };
     }
     return null;

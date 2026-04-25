@@ -35,7 +35,7 @@ src/
 3. Calls `GET api.anthropic.com/api/oauth/usage` with Bearer token
 4. Parses ALL response fields (five_hour, seven_day, seven_day_sonnet, seven_day_opus, extra_usage)
 5. Fetches prepaid credit balance via profile + credit grant APIs (separate caches)
-6. Caches responses in `~/.claude/plugins/claude-quota/` (usage: 2 min hard / 45 s soft TTL; profile: 24 h; credit grant: 10 min; multi-instance aware — bumps timestamp before fetch to prevent parallel fetches)
+6. Caches responses in `~/.claude/plugins/claude-quota/` (usage: 2 min hard / 45 s soft TTL; profile: 24 h; credit grant: 10 min when present, 24 h when null; multi-instance aware — bumps timestamp before fetch to prevent parallel fetches)
 7. Renders 1–3 lines to stdout (adaptive to terminal height and width)
 8. Writes `dashboard.html` to the plugin dir (auto-refreshes every 5s via meta tag; open once with `! open ~/.claude/plugins/claude-quota/dashboard.html`)
 
