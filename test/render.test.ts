@@ -416,7 +416,9 @@ describe('error states', () => {
       apiUnavailable: true, apiError: 'network',
     };
     const { line2 } = capture({ stdin: baseStdin, usage: unavailable, git: null, now });
-    assert.ok(line2.includes('usage:⚠'), 'unavailable indicator missing');
+    // Bare ⚠ glyph — same presentation as rows=1 and the syncHint path.
+    assert.ok(line2.includes('⚠'), 'unavailable indicator missing');
+    assert.ok(!line2.includes('usage:'), '"usage:" prefix removed for consistency');
     assert.ok(line2.includes('max'), 'plan name missing from unavailable line');
   });
 });

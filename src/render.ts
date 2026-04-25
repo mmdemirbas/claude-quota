@@ -682,11 +682,16 @@ export function render(input: RenderInput): void {
       }
     }
   } else if (usage?.apiUnavailable) {
-    const hint = usage.apiError === 'rate-limited' ? '⟳' : '⚠';
+    // Match the single-line and syncHint presentations: bare glyph,
+    // dim ⟳ for rate-limited, yellow ⚠ for everything else. The
+    // "usage:" prefix used to make this branch read differently from
+    // the other three places the same status surfaces — now they all
+    // look the same.
+    const hint = usage.apiError === 'rate-limited' ? dim('⟳') : c(YELLOW, '⚠');
     if (planText) {
-      console.log(`${R}${c(CYAN, planText)}${dim(' │ ')}${c(YELLOW, `usage:${hint}`)}`);
+      console.log(`${R}${c(CYAN, planText)}${dim(' │ ')}${hint}`);
     } else {
-      console.log(`${R}${c(YELLOW, `usage:${hint}`)}`);
+      console.log(`${R}${hint}`);
     }
   } else if (planText) {
     console.log(`${R}${c(CYAN, planText)}`);
