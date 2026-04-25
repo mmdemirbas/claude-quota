@@ -26,6 +26,29 @@ export function getCreditGrantLockPath(): string {
   return path.join(pluginDir(), '.credit-grant.lock');
 }
 
+export function getProfileLockPath(): string {
+  return path.join(pluginDir(), '.profile.lock');
+}
+
+/**
+ * Cheap "is someone currently fetching?" check used by the statusline
+ * parent before it spawns a background refresher. Returns true when a
+ * fresh lock file exists — meaning another instance (or our own
+ * earlier spawn) is mid-fetch and a duplicate spawn would just race to
+ * fail at acquireFetchLock.
+ *
+ * `lockPathOverride` is provided for tests and for callers that want
+ * to peek at a lock other than the main usage one.
+ */
+export function isFetchLockHeld(now: number = Date.now(), lockPathOverride?: string): boolean {
+  const lockPath = lockPathOverride ?? getFetchLockPath();
+  try {
+    const stat = fs.lstatSync(lockPath);
+    if (stat.isSymbolicLink()) return false;
+    return (now - stat.mtimeMs) < FETCH_COORDINATION_MS;
+  } catch { return false; }
+}
+
 /**
  * Try to acquire the fetch lock. Returns a handle on success (callers
  * MUST release it via the returned `release()` once the fetch

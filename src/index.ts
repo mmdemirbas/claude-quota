@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readStdin } from './stdin.js';
-import { getUsage, getCreditGrant, bumpCacheTimestamp, ensureProfileCached } from './usage.js';
+import { getUsage, getCreditGrant, bumpCacheTimestamp, ensureProfileCached, isFetchLockHeld } from './usage.js';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
@@ -70,11 +70,18 @@ async function main(): Promise<void> {
       usage.extraUsage = { ...usage.extraUsage, creditGrant };
     }
 
-    if (isStale) {
-      // Bump before spawning so a third parallel instance landing between
-      // here and the child's own bump sees a fresh-looking cache and skips
-      // the redundant refresh. The child still bumps inside getUsage —
-      // double-bump is cheap (a single small file write).
+    if (isStale && !isFetchLockHeld()) {
+      // A spawn is only useful if no fetch is in flight. The on-disk
+      // lock file is the same one acquireFetchLock would consult — if
+      // it's already held, our spawned child would just race to fail
+      // at lock acquisition and return without fetching. Saves the
+      // process-spawn cost on every parallel statusline instance.
+      //
+      // Bump before spawning so a third parallel instance landing
+      // between here and the child's own bump sees a fresh-looking
+      // cache and skips the redundant refresh. The child still bumps
+      // inside getUsage — double-bump is cheap (a single small file
+      // write).
       bumpCacheTimestamp();
       spawnBackgroundRefresh(scriptPath);
     }

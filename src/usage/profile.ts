@@ -18,7 +18,7 @@ import {
 } from './constants.js';
 import { readJsCache, writeJsCache, writeCacheFile } from './cache.js';
 import { fetchJson } from './api.js';
-import { acquireFetchLock, getCreditGrantLockPath } from './lock.js';
+import { acquireFetchLock, getCreditGrantLockPath, getProfileLockPath } from './lock.js';
 
 export interface ProfileData {
   orgUUID: string;
@@ -91,14 +91,31 @@ export async function ensureProfileCached(): Promise<void> {
   const creds = readCredentials(now);
   if (!creds) return;
 
-  const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
-  const uuid = profile?.organization?.uuid;
-  if (!uuid) return;
-  writeProfileCache({
-    orgUUID: uuid,
-    rateLimitTier: profile.organization?.rate_limit_tier,
-    organizationType: profile.organization?.organization_type,
-  }, now);
+  // Cross-instance lock so a 24h-TTL expiry doesn't fan out to one
+  // /api/oauth/profile call per parallel statusline tick. The peer
+  // that loses the lock just exits — by the time it next renders the
+  // winner will have written the cache, and readProfileCache hits.
+  const lock = acquireFetchLock(now, getProfileLockPath());
+  if (!lock) return;
+
+  try {
+    // Re-check inside the lock: a peer may have written the cache
+    // between our miss above and our lock acquisition. Without this
+    // we burn an unnecessary HTTP round trip even though the lock
+    // gated the herd.
+    if (readProfileCache(now)) return;
+
+    const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
+    const uuid = profile?.organization?.uuid;
+    if (!uuid) return;
+    writeProfileCache({
+      orgUUID: uuid,
+      rateLimitTier: profile.organization?.rate_limit_tier,
+      organizationType: profile.organization?.organization_type,
+    }, now);
+  } finally {
+    lock.release();
+  }
 }
 
 /**

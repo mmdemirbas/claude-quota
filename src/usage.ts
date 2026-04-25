@@ -19,7 +19,7 @@ export {
   rehydrateDate, parseRetryAfter,
 } from './usage/parse.js';
 export { recoverCacheState } from './usage/cache.js';
-export { acquireFetchLock, bumpCacheTimestamp } from './usage/lock.js';
+export { acquireFetchLock, bumpCacheTimestamp, isFetchLockHeld } from './usage/lock.js';
 export {
   requestApi,
   type RequestApiOpts,

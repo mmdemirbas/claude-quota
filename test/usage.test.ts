@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock, jitteredBackoff, parseRetryAfter } from '../src/usage.js';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock, jitteredBackoff, parseRetryAfter, isFetchLockHeld } from '../src/usage.js';
 import { writeFileSecure } from '../src/secure-fs.js';
 import type { CacheFile, UsageData } from '../src/types.js';
 
@@ -342,6 +342,29 @@ describe('acquireFetchLock', { skip: !isPosix }, () => {
     assert.ok(fs.existsSync(lockPath));
     a.release();
     assert.ok(!fs.existsSync(lockPath), 'release on our own lock must unlink');
+  });
+
+  // Regression: parent-side spawn skip. The statusline parent reads
+  // this before spawning a background refresh, so it can avoid forking
+  // a child that would just race to fail at acquireFetchLock.
+  test('isFetchLockHeld() returns true while a fresh lock exists', () => {
+    const now = Date.now();
+    const a = acquireFetchLock(now, lockPath);
+    assert.ok(a);
+    assert.equal(isFetchLockHeld(now, lockPath), true,
+      'lock-held check must observe a fresh lock');
+    a.release();
+    assert.equal(isFetchLockHeld(now, lockPath), false,
+      'lock-held check must observe absence after release');
+  });
+
+  test('isFetchLockHeld() ignores a stale lock past the coordination window', () => {
+    fs.writeFileSync(lockPath, 'orphan', { mode: 0o600 });
+    const stalePast = (Date.now() - 60_000) / 1000;
+    fs.utimesSync(lockPath, stalePast, stalePast);
+    assert.equal(isFetchLockHeld(Date.now(), lockPath), false,
+      'a stale lock must not block fresh spawns');
+    fs.unlinkSync(lockPath);
   });
 });
 
