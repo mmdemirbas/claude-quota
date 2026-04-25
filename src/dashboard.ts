@@ -452,28 +452,32 @@ function _esc(s) {
 }
 
 // Pace-aware severity classifier. Routes the card stripe and the bar
-// tint through one rule so they cannot disagree. The key insight: a
-// projection in the warn band is only alarming when the user is
-// actually heading there. If pace is "under", the bar is climbing
-// slower than time and the projected number is a soft estimate that
-// will most likely be undershot — show green. If pace is "over", the
-// projection is the more likely outcome and we colour by it.
+// tint through one rule so they cannot disagree.
+//
+// Two principles:
+//  (a) Current % is real, projection is extrapolation. Hard alarms come
+//      from the actual reading; projections only escalate when pace is
+//      directionally bad ('over').
+//  (b) Early in the window (low elapsed), projections are statistical
+//      noise — a 17% reading at 15% elapsed extrapolates to ~110% but
+//      tells us almost nothing. We treat such projections as advisory
+//      only, not alarm-worthy.
 //
 // paceWord: 'under' | 'on' | 'over' | undefined (no pace data).
 function severityFor(pct, projected, paceWord) {
-  // Hard alarms: actually broken or about to break, regardless of pace.
+  // Hard limits on current usage — these are real, not extrapolated.
   if (pct >= 95) return 'risk';
-  if (projected != null && projected >= 100) return 'risk';
   if (pct >= 85) return 'over';
-  if (projected != null && projected >= 90) return 'over';
-  // Over-pace bumps a healthy-looking number into warn so the user
-  // sees it's trending wrong before they hit the absolute thresholds.
-  if (paceWord === 'over') {
-    if (projected != null && projected >= 75) return 'over';
-    if (projected != null && projected >= 60) return 'warn';
-  }
-  // High current usage even at safe pace.
   if (pct >= 75) return 'warn';
+  // Projection-driven severity kicks in only when the user is actively
+  // burning faster than time. Under/on pace at low current % stays
+  // green even if a small-sample projection extrapolates to a scary
+  // number — that projection won't survive a few more data points.
+  if (paceWord === 'over' && projected != null) {
+    if (projected >= 100) return 'risk';
+    if (projected >= 90)  return 'over';
+    if (projected >= 75)  return 'warn';
+  }
   return 'ok';
 }
 
