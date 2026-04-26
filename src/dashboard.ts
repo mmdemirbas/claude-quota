@@ -72,9 +72,10 @@ const CSS = `
   --radius:   8px;
   --radius-s: 4px;
 
-  /* Track height for quota bars: 12px gives enough room to read the
-   * filled / over / projected / wasted layers without dominating the card. */
-  --bar-h:    12px;
+  /* Quota bar gets the visual weight (it's the primary metric).
+   * Time bar is a thin timeline so the eye lands on the quota first. */
+  --bar-h:        14px;
+  --bar-time-h:    3px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -241,47 +242,26 @@ main { max-width: 1100px; margin: 0 auto; }
   color: var(--text);
 }
 
-/* ── Pace meter ───────────────────────────────────────────────────────
- * The card-head's primary signal: how fast the user is burning vs
- * the ideal rate (quota%/elapsed%). The track has a centre line at
- * "on pace"; the fill grows leftward when under-pace and rightward
- * when over-pace. Visual length encodes magnitude; colour escalates
- * as the deviation gets ugly. The signed % beside the gauge gives
- * the precise reading for a second-glance check.
+/* ── Pace gauge ────────────────────────────────────────────────────────
+ * A speedometer-style semicircle in the card head. The needle points
+ * left when the user is under pace, straight up when on pace, and
+ * right when over pace. Needle colour escalates from green (under) to
+ * red (way over). The shape itself is the universal "this is a speed
+ * indicator" cue — no caption needed.
  */
-.pace-meter {
+.pace-gauge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-family: var(--mono);
   font-size: 11px;
 }
-.pace-track {
-  position: relative;
-  width: 80px;
-  height: 8px;
-  background: var(--bg-inset);
-  border-radius: 999px;
-  overflow: hidden;
-}
-.pace-center {
-  position: absolute;
-  left: 50%; top: 0; bottom: 0;
-  width: 1px;
-  margin-left: -0.5px;
-  background: var(--text-2);
-  opacity: 0.5;
-  z-index: 1;
-}
-.pace-fill {
-  position: absolute;
-  top: 0; bottom: 0;
-}
+.pace-gauge svg { display: block; flex-shrink: 0; }
 .pace-num { color: var(--text); font-weight: 600; min-width: 38px; text-align: right; }
 .pace-num.under { color: var(--ok); }
 .pace-num.warn  { color: var(--warn); }
 .pace-num.bad   { color: var(--risk); }
-.pace-meter.dim .pace-num { color: var(--text-3); }
+.pace-gauge.dim .pace-num { color: var(--text-3); }
 
 /* Aside text. Projected end sits in card-foot left; reset times sit in
  * card-foot right. Both mono, dim. */
@@ -385,10 +365,43 @@ main { max-width: 1100px; margin: 0 auto; }
  * tone matches the actual %. The bar.bar-time variant overrides this
  * with a neutral grey, since time-elapsed is context, not an alarm. */
 
-/* Time bar: neutral. The reader reads it as "context", not alarm. */
+/* Time bar: rendered as a thin timeline so it recedes from the
+ * quota bar. The eye lands on the quota (primary metric); the time
+ * track sits beneath as context. Markers convert from vertical lines
+ * (used on the quota bar) to dots, which feel timeline-native:
+ *  - "now"  → a filled dot at the current elapsed position
+ *  - "end"  → a small ring at the reset moment (right edge)
+ */
+.bar.bar-time {
+  height: var(--bar-time-h);
+  background: var(--bg-inset);
+  margin: 5px 0; /* preserve vertical centring inside the metric row */
+}
 .bar.bar-time .bar-fill {
   background: var(--text-3) !important;
-  opacity: 0.7;
+  opacity: 0.55;
+  /* Slim hairline filling the elapsed span — same height as the track. */
+}
+.bar.bar-time .bar-now {
+  /* Override the quota-bar vertical line with a filled dot. */
+  top: 50%; bottom: auto;
+  height: 9px; width: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  background: var(--text);
+  border-radius: 50%;
+  opacity: 0.95;
+}
+.bar.bar-time .bar-end {
+  /* "Reset" marker — small open ring, nudged in slightly so it
+   * doesn't get clipped by the bar's right edge. */
+  top: 50%; bottom: auto;
+  height: 7px; width: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  background: transparent;
+  background-image: none;
+  border: 1.4px solid var(--text-3);
+  border-radius: 50%;
+  transform: translateX(-3.5px);
 }
 
 /* Card foot: projected-end on the left, reset (relative + absolute)
@@ -521,70 +534,79 @@ function concernColor(pct, projected, paceWord) {
   return colorForPct(concern);
 }
 
-// Glanceable pace gauge. Returns HTML for the card-head meter that
-// shows whether the user is burning faster (right of centre) or
-// slower (left of centre) than the ideal rate, and by how much.
+// Speedometer-arc pace gauge. Returns HTML for the card-head element
+// that shows whether the user is burning faster or slower than the
+// ideal rate. The semicircular shape is the universal symbol of a
+// speed indicator — no caption is required for the user to recognise
+// what it represents.
 //
-// The fill grows OUTWARD from the centre line, so visual length =
-// magnitude of deviation. Cap the visual at ±100% deviation so a
-// freshly-opened window (huge ratio noise) doesn't pin the bar to
-// one edge — the numeric reading still shows the real value.
-//
-// The "fresh window" guard hides the meter when elapsed < 5%: the
-// ratio is too noisy to be useful that early, and showing wild
-// numbers undermines the trust-at-a-glance contract.
-function paceMeter(pct, elapsedPct) {
+//   * Needle direction encodes pace direction (left = under, up = on,
+//     right = over).
+//   * Needle colour escalates with magnitude on the over-pace side
+//     (white → yellow → red); under-pace stays green at any
+//     magnitude because slowing down is never alarming.
+//   * Cap the needle position at ±100% deviation (ratio 0..2) so a
+//     freshly-opened window with noisy ratios doesn't peg the needle
+//     wildly — the numeric readout still shows the real value.
+//   * Hidden ("—") when elapsed < 5%: too early to compute a
+//     trustworthy pace, the gauge stays neutral.
+function paceGauge(pct, elapsedPct) {
+  // Geometry constants — center, radius, and the arc endpoints. The
+  // SVG viewBox is 80×44; the arc spans from (10,38) to (70,38) with
+  // (40,38) as the needle pivot.
+  var SVG_OPEN = '<svg viewBox="0 0 80 44" width="80" height="44">';
+  var BG_ARC = '<path d="M 10 38 A 30 30 0 0 1 70 38" fill="none" '
+    + 'stroke="var(--bg-inset)" stroke-width="5" stroke-linecap="round" />';
+  var cx = 40, cy = 38, r = 30;
+
   if (elapsedPct == null || elapsedPct < 5) {
-    return '<span class="pace-meter dim">'
-      +    '<span class="pace-track"><span class="pace-center"></span></span>'
-      +    '<span class="pace-num">—</span>'
-      +  '</span>';
+    return '<span class="pace-gauge dim">'
+      + SVG_OPEN
+      +   BG_ARC
+      +   '<circle cx="' + cx + '" cy="' + cy + '" r="2.5" fill="var(--text-3)" />'
+      + '</svg>'
+      + '<span class="pace-num">—</span>'
+      + '</span>';
   }
+
   var ratio = pct / Math.max(0.01, elapsedPct);
-  var dev = ratio - 1; // negative = under, positive = over
+  var clamped = Math.max(0, Math.min(2, ratio));
+  // Map ratio 0..2 → angle 180°..0° (pointing left → up → right).
+  // SVG y-axis is flipped, so we subtract sin from cy.
+  var angle = Math.PI * (1 - clamped / 2);
+  var nx = (cx + r * Math.cos(angle)).toFixed(2);
+  var ny = (cy - r * Math.sin(angle)).toFixed(2);
+
+  var dev = ratio - 1;
   var devPct = Math.round(dev * 100);
-  var absDev = Math.abs(dev);
 
-  // Visual length: cap at 1.0 (= 100% deviation) so the bar never
-  // overflows. Linear within that range.
-  var visMag = Math.min(1, absDev);
-  var fillPct = visMag * 50; // half-track in either direction
-
-  // Colour escalates only on the over-pace side; under-pace stays
-  // green at any magnitude (slowing down is never alarming).
-  var fillColor;
-  var numClass;
+  var needleColor;
+  var numClass = '';
   if (dev < -0.05) {
-    fillColor = colorForPct(35); // mid-green tone, distinguishable from over
+    needleColor = colorForPct(20); // bright green
     numClass = 'under';
   } else if (dev <= 0.15) {
-    fillColor = 'var(--text-2)';
-    numClass = '';
+    needleColor = 'var(--text)';
   } else if (dev <= 0.5) {
-    fillColor = colorForPct(60); // yellow
+    needleColor = colorForPct(70); // orange
     numClass = 'warn';
   } else {
-    fillColor = colorForPct(95); // red
+    needleColor = colorForPct(95); // red
     numClass = 'bad';
-  }
-
-  var fillStyle = '';
-  if (dev > 0.005) {
-    fillStyle = 'left:50%;width:' + fillPct.toFixed(1) + '%;background:' + fillColor;
-  } else if (dev < -0.005) {
-    fillStyle = 'right:50%;width:' + fillPct.toFixed(1) + '%;background:' + fillColor;
   }
 
   var sign = dev > 0 ? '+' : dev < 0 ? '\\u2212' : '\\u00b1';
   var num = sign + Math.abs(devPct) + '%';
 
-  return '<span class="pace-meter">'
-    +    '<span class="pace-track">'
-    +      '<span class="pace-center"></span>'
-    +      (fillStyle ? '<span class="pace-fill" style="' + fillStyle + '"></span>' : '')
-    +    '</span>'
-    +    '<span class="pace-num ' + numClass + '">' + num + '</span>'
-    +  '</span>';
+  return '<span class="pace-gauge">'
+    + SVG_OPEN
+    +   BG_ARC
+    +   '<line x1="' + cx + '" y1="' + cy + '" x2="' + nx + '" y2="' + ny + '" '
+    +     'stroke="' + needleColor + '" stroke-width="2.5" stroke-linecap="round" />'
+    +   '<circle cx="' + cx + '" cy="' + cy + '" r="3" fill="' + needleColor + '" />'
+    + '</svg>'
+    + '<span class="pace-num ' + numClass + '">' + num + '</span>'
+    + '</span>';
 }
 
 function renderDashboard() {
@@ -791,7 +813,7 @@ function renderDashboard() {
 
     // Card head right (top-right of quota chart): pace meter — the
     // user's primary "should I slow down?" signal.
-    const pmHtml = paceMeter(cur, elapsedPct);
+    const pmHtml = paceGauge(cur, elapsedPct);
 
     // Card foot left: projected end %. Right: reset (relative + absolute).
     let footLeft = '';
@@ -889,7 +911,7 @@ function renderDashboard() {
     spendBar += '</div>';
 
     // Pace meter for the extra-usage card uses spend% vs month%.
-    const pmHtml = paceMeter(cur, elapsedPct);
+    const pmHtml = paceGauge(cur, elapsedPct);
 
     // Foot left: projected month-end spend ($).
     let footLeft = '';
