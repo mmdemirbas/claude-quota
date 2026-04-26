@@ -241,9 +241,50 @@ main { max-width: 1100px; margin: 0 auto; }
   color: var(--text);
 }
 
-/* Aside text. Projected % sits in card-head (top right of quota chart).
- * Reset times sit in card-foot (bottom right of time chart). Both mono,
- * dim, right-aligned. */
+/* ── Pace meter ───────────────────────────────────────────────────────
+ * The card-head's primary signal: how fast the user is burning vs
+ * the ideal rate (quota%/elapsed%). The track has a centre line at
+ * "on pace"; the fill grows leftward when under-pace and rightward
+ * when over-pace. Visual length encodes magnitude; colour escalates
+ * as the deviation gets ugly. The signed % beside the gauge gives
+ * the precise reading for a second-glance check.
+ */
+.pace-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.pace-track {
+  position: relative;
+  width: 80px;
+  height: 8px;
+  background: var(--bg-inset);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.pace-center {
+  position: absolute;
+  left: 50%; top: 0; bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: var(--text-2);
+  opacity: 0.5;
+  z-index: 1;
+}
+.pace-fill {
+  position: absolute;
+  top: 0; bottom: 0;
+}
+.pace-num { color: var(--text); font-weight: 600; min-width: 38px; text-align: right; }
+.pace-num.under { color: var(--ok); }
+.pace-num.warn  { color: var(--warn); }
+.pace-num.bad   { color: var(--risk); }
+.pace-meter.dim .pace-num { color: var(--text-3); }
+
+/* Aside text. Projected end sits in card-foot left; reset times sit in
+ * card-foot right. Both mono, dim. */
 .aside {
   font-family: var(--mono);
   font-size: 11px;
@@ -350,15 +391,18 @@ main { max-width: 1100px; margin: 0 auto; }
   opacity: 0.7;
 }
 
-/* Card foot houses the reset time aside (bottom-right of time chart),
- * or a "no active window" placeholder when no time data exists. */
+/* Card foot: projected-end on the left, reset (relative + absolute)
+ * stacked on the right. Either side can be empty when its data isn't
+ * available yet (early-window pace, or no active window). */
 .card-foot {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-3);
-  padding-top: 2px;
+  padding-top: 4px;
 }
 .card-foot.empty {
   justify-content: center;
@@ -475,6 +519,72 @@ function concernColor(pct, projected, paceWord) {
   var concern = (paceWord === 'over' && projected != null && projected > pct)
     ? projected : pct;
   return colorForPct(concern);
+}
+
+// Glanceable pace gauge. Returns HTML for the card-head meter that
+// shows whether the user is burning faster (right of centre) or
+// slower (left of centre) than the ideal rate, and by how much.
+//
+// The fill grows OUTWARD from the centre line, so visual length =
+// magnitude of deviation. Cap the visual at ±100% deviation so a
+// freshly-opened window (huge ratio noise) doesn't pin the bar to
+// one edge — the numeric reading still shows the real value.
+//
+// The "fresh window" guard hides the meter when elapsed < 5%: the
+// ratio is too noisy to be useful that early, and showing wild
+// numbers undermines the trust-at-a-glance contract.
+function paceMeter(pct, elapsedPct) {
+  if (elapsedPct == null || elapsedPct < 5) {
+    return '<span class="pace-meter dim">'
+      +    '<span class="pace-track"><span class="pace-center"></span></span>'
+      +    '<span class="pace-num">—</span>'
+      +  '</span>';
+  }
+  var ratio = pct / Math.max(0.01, elapsedPct);
+  var dev = ratio - 1; // negative = under, positive = over
+  var devPct = Math.round(dev * 100);
+  var absDev = Math.abs(dev);
+
+  // Visual length: cap at 1.0 (= 100% deviation) so the bar never
+  // overflows. Linear within that range.
+  var visMag = Math.min(1, absDev);
+  var fillPct = visMag * 50; // half-track in either direction
+
+  // Colour escalates only on the over-pace side; under-pace stays
+  // green at any magnitude (slowing down is never alarming).
+  var fillColor;
+  var numClass;
+  if (dev < -0.05) {
+    fillColor = colorForPct(35); // mid-green tone, distinguishable from over
+    numClass = 'under';
+  } else if (dev <= 0.15) {
+    fillColor = 'var(--text-2)';
+    numClass = '';
+  } else if (dev <= 0.5) {
+    fillColor = colorForPct(60); // yellow
+    numClass = 'warn';
+  } else {
+    fillColor = colorForPct(95); // red
+    numClass = 'bad';
+  }
+
+  var fillStyle = '';
+  if (dev > 0.005) {
+    fillStyle = 'left:50%;width:' + fillPct.toFixed(1) + '%;background:' + fillColor;
+  } else if (dev < -0.005) {
+    fillStyle = 'right:50%;width:' + fillPct.toFixed(1) + '%;background:' + fillColor;
+  }
+
+  var sign = dev > 0 ? '+' : dev < 0 ? '\\u2212' : '\\u00b1';
+  var num = sign + Math.abs(devPct) + '%';
+
+  return '<span class="pace-meter">'
+    +    '<span class="pace-track">'
+    +      '<span class="pace-center"></span>'
+    +      (fillStyle ? '<span class="pace-fill" style="' + fillStyle + '"></span>' : '')
+    +    '</span>'
+    +    '<span class="pace-num ' + numClass + '">' + num + '</span>'
+    +  '</span>';
 }
 
 function renderDashboard() {
@@ -676,36 +786,42 @@ function renderDashboard() {
         + '</div>';
     }
 
-    // Card head right (top-right of quota chart): projected end %.
-    let projAside = '';
+    // Card head right (top-right of quota chart): pace meter — the
+    // user's primary "should I slow down?" signal.
+    const pmHtml = paceMeter(cur, elapsedPct);
+
+    // Card foot left: projected end %. Right: reset (relative + absolute).
+    let footLeft = '';
     if (projected != null) {
-      projAside = '<span class="aside">'
+      footLeft = '<span class="aside">'
         + '<span class="lbl">projected end</span> '
         + '<span class="v">' + projected + '%</span>'
         + '</span>';
     }
-
-    // Card foot (bottom-right of time chart): reset time, both forms.
-    let foot = '';
-    if (timeBar && q.resetAt && q.resetAt > d.now) {
-      foot = '<div class="card-foot">'
-        + '<span class="aside stack">'
+    let footRight = '';
+    if (q.resetAt && q.resetAt > d.now) {
+      footRight = '<span class="aside stack">'
         +   '<span><span class="lbl">resets in</span> <span class="v">' + fmt(q.resetAt - d.now) + '</span></span>'
         +   '<span class="v-2">' + fmtDate(q.resetAt) + '</span>'
-        + '</span>'
-        + '</div>';
-    } else if (!timeBar && q.resetAt && q.resetAt > d.now) {
-      // Window known but no pace yet — show countdown centered.
-      foot = '<div class="card-foot empty">resets in <span class="v" style="color:var(--text);font-weight:500;margin-left:4px">'
-        + fmt(q.resetAt - d.now) + '</span></div>';
-    } else if (!timeBar) {
+        + '</span>';
+    } else if (q.resetAt) {
+      footRight = '<span class="aside v-2">window closed</span>';
+    }
+
+    let foot;
+    if (!timeBar && !q.resetAt) {
       foot = '<div class="card-foot empty">no active window</div>';
+    } else {
+      foot = '<div class="card-foot">'
+        + '<span>' + footLeft + '</span>'
+        + '<span>' + footRight + '</span>'
+        + '</div>';
     }
 
     html += '<section class="card" style="--card-color:' + stripeColor + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">' + _esc(q.label) + '</span>'
-      +   projAside
+      +   pmHtml
       + '</div>'
       + '<div class="metric">'
       +   '<span class="m-label">quota</span>'
@@ -769,18 +885,20 @@ function renderDashboard() {
     }
     spendBar += '</div>';
 
-    // Quota-row aside: projected month-end spend.
-    let projAside = '';
+    // Pace meter for the extra-usage card uses spend% vs month%.
+    const pmHtml = paceMeter(cur, elapsedPct);
+
+    // Foot left: projected month-end spend ($).
+    let footLeft = '';
     if (projectedSpend != null) {
-      projAside = '<span class="aside">'
+      footLeft = '<span class="aside">'
         + '<span class="lbl">projected end</span> '
         + '<span class="v">' + fmtMoney(projectedSpend) + '</span>'
         + '</span>';
     }
-
-    // Time-row aside: relative + absolute reset (1st of next month).
+    // Foot right: relative + absolute reset (1st of next month).
     const monthEndMs = monthEndAt - d.now;
-    const resetAside = '<span class="aside stack">'
+    const footRight = '<span class="aside stack">'
       + '<span><span class="lbl">resets in</span> <span class="v">' + fmt(monthEndMs) + '</span></span>'
       + '<span class="v-2">' + fmtDate(monthEndAt) + '</span>'
       + '</span>';
@@ -788,7 +906,7 @@ function renderDashboard() {
     html += '<section class="card money" style="--card-color:' + stripeColor + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">Extra usage</span>'
-      +   projAside
+      +   pmHtml
       + '</div>'
       + '<div class="metric">'
       +   '<span class="m-label">spend</span>'
@@ -804,7 +922,10 @@ function renderDashboard() {
       +   '</div>'
       +   '<span class="m-value">' + elapsedPct + '<span class="m-unit">%</span></span>'
       + '</div>'
-      + '<div class="card-foot">' + resetAside + '</div>'
+      + '<div class="card-foot">'
+      +   '<span>' + footLeft + '</span>'
+      +   '<span>' + footRight + '</span>'
+      + '</div>'
       + '<div class="ms-summary">'
       +   '<span class="item"><span class="lbl">limit</span><span class="v">' + fmtMoney(monthlyLimit) + '</span></span>'
       +   (balance != null
