@@ -69,6 +69,8 @@ const baseUsage: UsageData = {
   designResetAt: null,
   routines: null,
   routinesResetAt: null,
+  code: null,
+  codeResetAt: null,
   extraUsage: null,
 };
 

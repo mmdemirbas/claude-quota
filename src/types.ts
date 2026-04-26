@@ -21,7 +21,13 @@ export interface StdinData {
   rows?: number;
 }
 
-/** Full usage API response from api.anthropic.com/api/oauth/usage */
+/** Full usage API response from api.anthropic.com/api/oauth/usage.
+ *
+ * Anthropic uses internal codenames for newer buckets (cowork, omelette,
+ * oauth_apps) and surfaces them on claude.ai/settings/usage with friendlier
+ * labels. The codename ↔ label mapping is undocumented and inferred — when
+ * a quota fails to render, run with CLAUDE_QUOTA_DEBUG=1 to dump the raw
+ * response to .debug-api.json and compare keys with claude.ai. */
 export interface UsageApiResponse {
   five_hour?: { utilization?: number; resets_at?: string };
   seven_day?: { utilization?: number; resets_at?: string };
@@ -29,6 +35,7 @@ export interface UsageApiResponse {
   seven_day_opus?: { utilization?: number; resets_at?: string };
   seven_day_oauth_apps?: { utilization?: number; resets_at?: string } | null;
   seven_day_cowork?: { utilization?: number; resets_at?: string } | null;
+  seven_day_omelette?: { utilization?: number; resets_at?: string } | null;
   extra_usage?: {
     is_enabled?: boolean;
     monthly_limit?: number;
@@ -60,6 +67,9 @@ export interface UsageData {
   /** 7-day Claude Routines (oauth apps) utilization 0-100 */
   routines: number | null;
   routinesResetAt: Date | null;
+  /** 7-day Claude Code (omelette) utilization 0-100 */
+  code: number | null;
+  codeResetAt: Date | null;
   /** Extra usage info */
   extraUsage: ExtraUsageData | null;
   /** API error state */

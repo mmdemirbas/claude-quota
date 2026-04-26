@@ -5,6 +5,9 @@ import { getCachePath, readCache, writeCache, recoverCacheState } from './usage/
 import { acquireFetchLock, bumpCacheTimestamp } from './usage/lock.js';
 import { fetchApi } from './usage/api.js';
 import { readProfileCache } from './usage/profile.js';
+import { writeFileSecure } from './secure-fs.js';
+import { pluginDir } from './paths.js';
+import { join } from 'node:path';
 
 // ── Re-exports for the public surface ─────────────────────────────────────
 //
@@ -127,6 +130,7 @@ export async function getUsage(opts?: { forceRefresh?: boolean; fetcher?: FetchA
       opus: null, opusResetAt: null,
       design: null, designResetAt: null,
       routines: null, routinesResetAt: null,
+      code: null, codeResetAt: null,
       extraUsage: null,
       apiUnavailable: true,
       apiError: result.error,
@@ -163,6 +167,22 @@ export async function getUsage(opts?: { forceRefresh?: boolean; fetcher?: FetchA
     return { data: failure, isStale: false };
   }
 
+  // Diagnostic: with CLAUDE_QUOTA_DEBUG=1, dump the raw API response
+  // to disk so the user (or future you) can inspect what fields the
+  // server actually returned. Useful when a quota that "should" be
+  // there (Claude Design, Routines, …) doesn't render — the dump
+  // reveals whether the server omitted the field or we just have the
+  // wrong field name in the parser. Goes through writeFileSecure so
+  // it lands at 0o600 (it can include account-tier info).
+  if (process.env.CLAUDE_QUOTA_DEBUG === '1') {
+    try {
+      writeFileSecure(
+        join(pluginDir(), '.debug-api.json'),
+        JSON.stringify({ fetchedAt: now, raw: result.data }, null, 2),
+      );
+    } catch { /* ignore */ }
+  }
+
   // Parse full response
   const usage: UsageData = {
     planName,
@@ -175,13 +195,19 @@ export async function getUsage(opts?: { forceRefresh?: boolean; fetcher?: FetchA
     sonnetResetAt: parseDate(result.data.seven_day_sonnet?.resets_at),
     opus: clamp(result.data.seven_day_opus?.utilization),
     opusResetAt: parseDate(result.data.seven_day_opus?.resets_at),
-    // Mapping is a best guess from API field naming and may need to flip
-    // if claude.ai relabels: cowork → "Claude Design" (collaborative
-    // workspaces), oauth_apps → "Claude Routines" (OAuth-driven automation).
+    // Codenames are Anthropic-internal; mapping inferred from
+    // claude.ai/settings/usage labels. Run with CLAUDE_QUOTA_DEBUG=1 to
+    // dump the raw response to .debug-api.json if a label/codename
+    // mapping needs verification.
+    //   cowork    → "Claude Design"   (collaborative workspaces)
+    //   oauth_apps→ "Claude Routines" (OAuth-driven automation)
+    //   omelette  → "Claude Code"     (heaviest Max-tier product)
     design: clamp(result.data.seven_day_cowork?.utilization),
     designResetAt: parseDate(result.data.seven_day_cowork?.resets_at),
     routines: clamp(result.data.seven_day_oauth_apps?.utilization),
     routinesResetAt: parseDate(result.data.seven_day_oauth_apps?.resets_at),
+    code: clamp(result.data.seven_day_omelette?.utilization),
+    codeResetAt: parseDate(result.data.seven_day_omelette?.resets_at),
     extraUsage: parseExtraUsage(result.data.extra_usage),
   };
 

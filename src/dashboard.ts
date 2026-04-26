@@ -601,6 +601,9 @@ function renderDashboard() {
   if (raw.routines !== null && raw.routines !== undefined)
     quotas.push({ id: 'rtn', label: 'Claude Routines', pct: raw.routines,
       resetAt: raw.routinesResetAt ? new Date(raw.routinesResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  if (raw.code !== null && raw.code !== undefined)
+    quotas.push({ id: 'cod', label: 'Claude Code', pct: raw.code,
+      resetAt: raw.codeResetAt ? new Date(raw.codeResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
 
   var extraUsage = null;
   if (raw.extraUsage && raw.extraUsage.enabled) {

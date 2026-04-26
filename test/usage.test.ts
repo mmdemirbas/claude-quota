@@ -219,6 +219,7 @@ describe('recoverCacheState', () => {
     opus: null, opusResetAt: null,
     design: null, designResetAt: null,
     routines: null, routinesResetAt: null,
+    code: null, codeResetAt: null,
     extraUsage: null,
   };
 
