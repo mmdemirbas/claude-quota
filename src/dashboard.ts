@@ -664,6 +664,9 @@ function renderDashboard() {
   }
 
   function fmtMoney(v) {
+    // Defensive: non-finite slips through if a future caller divides by zero
+    // upstream. Render as a dim placeholder rather than "$NaN" / "$Infinity".
+    if (typeof v !== 'number' || !isFinite(v)) return '—';
     if (v === 0) return '$0';
     if (v < 100) return '$' + v.toFixed(2);
     if (v < 1000) return '$' + Math.round(v);
