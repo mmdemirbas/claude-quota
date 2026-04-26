@@ -552,7 +552,10 @@ function paceGauge(pct, elapsedPct) {
   var ny = (cy - r * Math.sin(angle)).toFixed(2);
 
   var dev = ratio - 1;
-  var devPct = Math.round(dev * 100);
+  // Cap the numeric readout at ±999% so the pace-num element never
+  // overflows the card head. The needle is independently clamped to
+  // ratio ∈ [0, 2] above; this only affects the digits next to it.
+  var devPct = Math.max(-999, Math.min(999, Math.round(dev * 100)));
 
   var needleColor;
   var numClass = '';
