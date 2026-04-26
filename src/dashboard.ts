@@ -747,21 +747,24 @@ function renderDashboard() {
     const projC = projected == null ? null : Math.max(0, Math.min(100, projected));
     const projTrailEnd = projC != null && projC > cur ? projC : null;
 
-    // Continuous colour ramp: each bar segment takes the colour of the %
-    // it represents, so 5% reads as a different green than 25%, which
-    // reads as different yellow-green than 60%. Inline styles because
-    // every card draws a unique tone — too many to enumerate as classes.
+    // Continuous colour ramp: bar fill tone reflects current %, so 5%
+    // reads as a different green than 25%, which reads as different
+    // yellow-green than 60%. The dim trail (projected end-of-window
+    // landing zone) inherits the SAME hue as the fill — the bar then
+    // reads as one coherent value extended by a future estimate,
+    // instead of a two-tone collage. Alarm signalling lives in the
+    // card stripe and the pace meter; the bar just shows quantity.
     const fillColor = colorForPct(cur);
-    const projFillColor = projTrailEnd != null ? colorForPct(projTrailEnd) : null;
     const stripeColor = concernColor(cur, projC, paceWord);
 
-    // Quota bar: solid fill, dim trail to projected, solid line at
-    // current, dashed line at estimated.
+    // Quota bar: solid fill, dim trail to projected (capped at 100%
+    // for visual width — the actual number lives in "projected end"),
+    // solid line at current, dashed line at estimated.
     let quotaBar = '<div class="bar">';
     quotaBar += '<div class="bar-fill" style="width:' + cur + '%;background:' + fillColor + '"></div>';
     if (projTrailEnd != null) {
       quotaBar += '<div class="bar-proj" style="left:' + cur
-        + '%;width:' + (projTrailEnd - cur) + '%;background:' + projFillColor + '"></div>';
+        + '%;width:' + (projTrailEnd - cur) + '%;background:' + fillColor + '"></div>';
     }
     quotaBar += '<div class="bar-now" style="left:' + cur + '%"></div>';
     if (projC != null) {
@@ -869,15 +872,15 @@ function renderDashboard() {
     const projTrailEnd = projC != null && projC > cur ? projC : null;
 
     const fillColor = colorForPct(cur);
-    const projFillColor = projTrailEnd != null ? colorForPct(projTrailEnd) : null;
     const stripeColor = concernColor(cur, projC, paceWord);
 
-    // Spend bar
+    // Spend bar — same hue policy as the quota bars: fill colour
+    // tracks the current % and the dim trail uses the same colour.
     let spendBar = '<div class="bar">';
     spendBar += '<div class="bar-fill" style="width:' + cur + '%;background:' + fillColor + '"></div>';
     if (projTrailEnd != null) {
       spendBar += '<div class="bar-proj" style="left:' + cur + '%;width:'
-        + (projTrailEnd - cur) + '%;background:' + projFillColor + '"></div>';
+        + (projTrailEnd - cur) + '%;background:' + fillColor + '"></div>';
     }
     spendBar += '<div class="bar-now" style="left:' + cur + '%"></div>';
     if (projC != null) {
