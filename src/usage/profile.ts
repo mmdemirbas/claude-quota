@@ -169,6 +169,22 @@ export async function getCreditGrant(): Promise<number | null> {
       `/api/oauth/organizations/${encodeURIComponent(profileData.orgUUID)}/overage_credit_grant`,
       creds.accessToken,
     );
+    // Debug dump — same DEBUG flag as the usage endpoint. Helps when
+    // a feature shown on claude.ai (e.g. "$X spent / $Y limit" under
+    // disabled extras) is missing from our parsed UsageData and we
+    // need to compare what the server actually returned with what we
+    // expect.
+    if (process.env.CLAUDE_QUOTA_DEBUG === '1') {
+      try {
+        const path = await import('node:path');
+        const { pluginDir } = await import('../paths.js');
+        const { writeFileSecure } = await import('../secure-fs.js');
+        writeFileSecure(
+          path.join(pluginDir(), '.debug-credit-grant.json'),
+          JSON.stringify({ fetchedAt: now, raw: grant }, null, 2),
+        );
+      } catch { /* ignore */ }
+    }
     if (!grant || !grant.granted || grant.amount_minor_units == null) {
       writeCreditGrantCache(null, now);
       return null;
