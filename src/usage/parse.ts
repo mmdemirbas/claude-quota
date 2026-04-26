@@ -27,6 +27,9 @@ export function hydrateDates(data: UsageData): UsageData {
     sevenDayResetAt: rehydrateDate(data.sevenDayResetAt),
     sonnetResetAt: rehydrateDate(data.sonnetResetAt),
     opusResetAt: rehydrateDate(data.opusResetAt),
+    designResetAt: rehydrateDate(data.designResetAt),
+    routinesResetAt: rehydrateDate(data.routinesResetAt),
+    codeResetAt: rehydrateDate(data.codeResetAt),
   };
 }
 

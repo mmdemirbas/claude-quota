@@ -19,7 +19,7 @@ import { join } from 'node:path';
 export {
   // Pure helpers (used directly by tests)
   clamp, parseDate, parseExtraUsage, jitteredBackoff,
-  rehydrateDate, parseRetryAfter,
+  rehydrateDate, parseRetryAfter, hydrateDates,
 } from './usage/parse.js';
 export { recoverCacheState } from './usage/cache.js';
 export { acquireFetchLock, bumpCacheTimestamp, isFetchLockHeld } from './usage/lock.js';

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { clamp, parseDate, parseExtraUsage, rehydrateDate, recoverCacheState, acquireFetchLock, jitteredBackoff, parseRetryAfter, isFetchLockHeld } from '../src/usage.js';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate, hydrateDates, recoverCacheState, acquireFetchLock, jitteredBackoff, parseRetryAfter, isFetchLockHeld } from '../src/usage.js';
 import { writeFileSecure } from '../src/secure-fs.js';
 import type { CacheFile, UsageData } from '../src/types.js';
 
@@ -74,6 +74,61 @@ describe('rehydrateDate', () => {
     assert.equal(rehydrateDate({} as unknown), null);
     assert.equal(rehydrateDate([] as unknown), null);
     assert.equal(rehydrateDate(true as unknown), null);
+  });
+});
+
+// Regression: hydrateDates rehydrates *ResetAt fields after JSON deserialization
+// from disk. When new quota buckets (design/routines/code) were added the helper
+// silently dropped them, so cached values came back as ISO strings while the
+// TypeScript type still claimed Date | null — a contract violation that would
+// surface as a .getTime() call on a string in any future code path that reads them.
+describe('hydrateDates', () => {
+  test('rehydrates every *ResetAt field declared in UsageData', () => {
+    const ts = '2026-04-26T10:00:00Z';
+    const cached = JSON.parse(JSON.stringify({
+      planName: 'Max 20x',
+      fiveHour: 41, fiveHourResetAt: new Date(ts),
+      sevenDay: 51, sevenDayResetAt: new Date(ts),
+      sonnet: 6, sonnetResetAt: new Date(ts),
+      opus: 12, opusResetAt: new Date(ts),
+      design: 0, designResetAt: new Date(ts),
+      routines: 0, routinesResetAt: new Date(ts),
+      code: 0, codeResetAt: new Date(ts),
+      extraUsage: null,
+    })) as UsageData;
+
+    // Sanity: round-trip stringified the Dates to strings.
+    assert.equal(typeof (cached as unknown as Record<string, unknown>).fiveHourResetAt, 'string');
+    assert.equal(typeof (cached as unknown as Record<string, unknown>).designResetAt, 'string');
+
+    const out = hydrateDates(cached);
+
+    assert.ok(out.fiveHourResetAt instanceof Date, 'fiveHourResetAt');
+    assert.ok(out.sevenDayResetAt instanceof Date, 'sevenDayResetAt');
+    assert.ok(out.sonnetResetAt instanceof Date, 'sonnetResetAt');
+    assert.ok(out.opusResetAt instanceof Date, 'opusResetAt');
+    assert.ok(out.designResetAt instanceof Date, 'designResetAt');
+    assert.ok(out.routinesResetAt instanceof Date, 'routinesResetAt');
+    assert.ok(out.codeResetAt instanceof Date, 'codeResetAt');
+  });
+
+  test('preserves null *ResetAt fields as null (not Invalid Date)', () => {
+    const cached = {
+      planName: 'Max 20x',
+      fiveHour: null, fiveHourResetAt: null,
+      sevenDay: null, sevenDayResetAt: null,
+      sonnet: null, sonnetResetAt: null,
+      opus: null, opusResetAt: null,
+      design: null, designResetAt: null,
+      routines: null, routinesResetAt: null,
+      code: null, codeResetAt: null,
+      extraUsage: null,
+    } as UsageData;
+
+    const out = hydrateDates(cached);
+    assert.equal(out.designResetAt, null);
+    assert.equal(out.routinesResetAt, null);
+    assert.equal(out.codeResetAt, null);
   });
 });
 
