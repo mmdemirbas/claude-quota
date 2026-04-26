@@ -148,20 +148,16 @@ export async function getCreditGrant(): Promise<number | null> {
     const creds = readCredentials(now);
     if (!creds) return null;
 
-    // Get org UUID (from cache or profile API). May have already been
-    // populated by ensureProfileCached() running ahead of us in
-    // index.ts; cache hit is the common case.
+    // Get org UUID via the profile cache. Cold path defers to
+    // ensureProfileCached() so the *profile* lock serializes the fetch
+    // — without this, two parallel processes (one in this branch and one
+    // already inside ensureProfileCached) would both hit /api/oauth/profile
+    // because they hold *different* locks (credit-grant vs profile).
     let profileData = readProfileCache(now);
     if (!profileData) {
-      const profile = await fetchJson<ProfileApiResponse>('/api/oauth/profile', creds.accessToken);
-      const uuid = profile?.organization?.uuid;
-      if (!uuid) return null;
-      profileData = {
-        orgUUID: uuid,
-        rateLimitTier: profile?.organization?.rate_limit_tier,
-        organizationType: profile?.organization?.organization_type,
-      };
-      writeProfileCache(profileData, now);
+      await ensureProfileCached();
+      profileData = readProfileCache(now);
+      if (!profileData) return null;
     }
 
     // Fetch credit grant
