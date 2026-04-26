@@ -17,6 +17,14 @@ export const CACHE_RATE_LIMITED_MAX_MS = 10 * 60_000; // cap the dwell at 10 min
                                                       // sustained 429 doesn't hold the line indefinitely.
 export const CACHE_RATE_LIMITED_JITTER = 0.2;       // ±20% backoff jitter to keep parallel instances
                                                     //   from re-converging onto the same retry boundary.
+// Hard upper bound on how long a single 429 (or a tampered/corrupted
+// retryAfterUntil in the cache) can hold the plugin in backoff. Without
+// this, a server returning Retry-After: 99999999 — or a same-user process
+// that writes retryAfterUntil: 9e99 — silences the plugin until the cache
+// file is manually deleted. 24h is well past the longest legitimate
+// rate-limit window Anthropic actually emits, so the cap doesn't shorten
+// any real Retry-After in practice.
+export const RETRY_AFTER_MAX_MS = 24 * 60 * 60_000;
 export const FETCH_COORDINATION_MS = 20_000;       // 20s — stale-lock reclaim threshold (must exceed API_TIMEOUT_MS so an in-flight fetch's lock isn't stolen by a peer)
 export const PROFILE_CACHE_TTL_MS = 24 * 60 * 60_000; // 24h — org UUID rarely changes
 export const CREDIT_GRANT_CACHE_TTL_MS = 10 * 60_000; // 10 min — balance changes only on top-up

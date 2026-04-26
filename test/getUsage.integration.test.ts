@@ -163,6 +163,50 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
     assert.equal(cache.lastGoodData.fiveHour, 25);
   });
 
+  // ── Retry-After upper bound ───────────────────────────────────────────────
+  //
+  // A tampered cache (any same-user process can write data.js) — or a
+  // server returning a pathological Retry-After — could plant a
+  // retryAfterUntil far in the future and silence the plugin until the
+  // file is manually deleted. The read-site cap (RETRY_AFTER_MAX_MS = 24h)
+  // is the safety valve.
+  test('cached retryAfterUntil is capped so a corrupt value cannot silence the plugin forever', async () => {
+    const calls = { count: 0 };
+
+    // Plant a cache that *claims* to be rate-limited until 99 years from
+    // now, but whose timestamp is 25 hours in the past. With the cap, the
+    // effective retryUntil is timestamp + 24h, which is already past — so
+    // the read should fall through and the next getUsage must fetch.
+    const ancient = Date.now() - 25 * 3600_000;
+    const planted = {
+      data: {
+        planName: 'Max 20x',
+        fiveHour: null, fiveHourResetAt: null,
+        sevenDay: null, sevenDayResetAt: null,
+        sonnet: null, sonnetResetAt: null,
+        opus: null, opusResetAt: null,
+        design: null, designResetAt: null,
+        routines: null, routinesResetAt: null,
+        code: null, codeResetAt: null,
+        extraUsage: null,
+        apiUnavailable: true,
+        apiError: 'rate-limited',
+      },
+      timestamp: ancient,
+      rateLimitedCount: 1,
+      retryAfterUntil: Date.now() + 99 * 365 * 24 * 3600_000,
+    };
+    fs.writeFileSync(
+      path.join(pluginDir, 'data.js'),
+      `var DATA=${JSON.stringify(planted)};`,
+      { mode: 0o600 },
+    );
+
+    const result = await getUsage({ fetcher: makeFetcher({ data: goodResponse }, calls) });
+    assert.equal(calls.count, 1, 'cap must let the read fall through after RETRY_AFTER_MAX_MS');
+    assert.equal(result.data?.fiveHour, 25);
+  });
+
   // ── Force refresh + lock ──────────────────────────────────────────────────
 
   test('forceRefresh re-invokes the fetcher even when the cache is fresh', async () => {

@@ -10,6 +10,7 @@ import {
   CACHE_FAILURE_TTL_MS,
   CACHE_RATE_LIMITED_BASE_MS,
   CACHE_RATE_LIMITED_MAX_MS,
+  RETRY_AFTER_MAX_MS,
 } from './constants.js';
 import { hydrateDates } from './parse.js';
 
@@ -65,7 +66,15 @@ export function readCache(now: number): { data: UsageData; isStale: boolean } | 
         CACHE_RATE_LIMITED_BASE_MS * Math.pow(2, Math.max(0, cache.rateLimitedCount - 1)),
         CACHE_RATE_LIMITED_MAX_MS,
       );
-      const retryUntil = cache.retryAfterUntil ?? (cache.timestamp + backoff);
+      // Cap retryUntil so a tampered cache (retryAfterUntil = 9e99) or a
+      // pathologically large server Retry-After can't lock us into silent
+      // backoff forever. After RETRY_AFTER_MAX_MS the read falls through
+      // and we re-fetch — the worst case is one extra request to a still-
+      // rate-limited endpoint, which then re-arms the same cap.
+      const retryUntil = Math.min(
+        cache.retryAfterUntil ?? (cache.timestamp + backoff),
+        cache.timestamp + RETRY_AFTER_MAX_MS,
+      );
       if (now < retryUntil) {
         // Still in backoff — return last good data with syncing hint; never trigger background refresh
         const display = cache.lastGoodData
