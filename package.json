@@ -1,6 +1,6 @@
 {
   "name": "@mmdemirbas/claude-quota",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Compact quota-focused statusline for Claude Code",
   "type": "module",
   "main": "dist/index.js",
