@@ -214,6 +214,16 @@ main { max-width: 1100px; margin: 0 auto; }
 .card:hover { transform: translateY(-1px); }
 .card:hover { border-color: var(--border-2); }
 
+/* Empty / not-enabled state: bucket exists in the API but holds no
+ * usage to render. Card chrome is dimmed so it reads as catalogue,
+ * not data. */
+.card.empty {
+  border-style: dashed;
+  border-color: var(--border);
+}
+.card.empty .card-title { color: var(--text-2); }
+.card.empty .bar-fill { background: var(--text-3) !important; opacity: 0.2; }
+
 /* Severity stripe on the left — drawn via ::before so we don't need to
  * paint the entire border in colour (looked too loud). The colour is
  * set per-card via the --card-color CSS variable, computed from the
@@ -592,26 +602,36 @@ function renderDashboard() {
   if (raw.sonnet !== null && raw.sonnet !== undefined)
     quotas.push({ id: 'snt', label: 'Sonnet only', pct: raw.sonnet,
       resetAt: raw.sonnetResetAt ? new Date(raw.sonnetResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  // Opus only renders when present — accounts without Opus access
+  // omit the field entirely, and a "—" card would just be noise.
   if (raw.opus !== null && raw.opus !== undefined)
     quotas.push({ id: 'ops', label: 'Opus only', pct: raw.opus,
       resetAt: raw.opusResetAt ? new Date(raw.opusResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
-  if (raw.design !== null && raw.design !== undefined)
-    quotas.push({ id: 'dsn', label: 'Claude Design', pct: raw.design,
-      resetAt: raw.designResetAt ? new Date(raw.designResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
-  if (raw.routines !== null && raw.routines !== undefined)
-    quotas.push({ id: 'rtn', label: 'Claude Routines', pct: raw.routines,
-      resetAt: raw.routinesResetAt ? new Date(raw.routinesResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
-  if (raw.code !== null && raw.code !== undefined)
-    quotas.push({ id: 'cod', label: 'Claude Code', pct: raw.code,
-      resetAt: raw.codeResetAt ? new Date(raw.codeResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  // Design / Routines / Code always render — surfacing them even when
+  // null lets the user see the catalogue of buckets the API exposes
+  // and notice what hasn't been used. Empty cards land in the empty
+  // placeholder branch below (rendered with "—" instead of a %).
+  quotas.push({ id: 'dsn', label: 'Claude Design', pct: raw.design ?? null,
+    resetAt: raw.designResetAt ? new Date(raw.designResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  quotas.push({ id: 'rtn', label: 'Claude Routines', pct: raw.routines ?? null,
+    resetAt: raw.routinesResetAt ? new Date(raw.routinesResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
+  quotas.push({ id: 'cod', label: 'Claude Code', pct: raw.code ?? null,
+    resetAt: raw.codeResetAt ? new Date(raw.codeResetAt).getTime() : null, windowMs: SEVEN_DAY_MS });
 
+  // Always pass extraUsage through, even when disabled, so the
+  // renderer can show a "not enabled" placeholder card. Only when
+  // the API omits the field entirely do we leave it as null.
   var extraUsage = null;
-  if (raw.extraUsage && raw.extraUsage.enabled) {
-    var cg = (typeof CREDIT_GRANT !== 'undefined' && CREDIT_GRANT && CREDIT_GRANT.creditGrant != null)
-      ? CREDIT_GRANT.creditGrant
-      : (raw.extraUsage.creditGrant != null ? raw.extraUsage.creditGrant : null);
-    extraUsage = { enabled: true, monthlyLimit: raw.extraUsage.monthlyLimit,
-      usedCredits: raw.extraUsage.usedCredits, creditGrant: cg };
+  if (raw.extraUsage) {
+    if (raw.extraUsage.enabled) {
+      var cg = (typeof CREDIT_GRANT !== 'undefined' && CREDIT_GRANT && CREDIT_GRANT.creditGrant != null)
+        ? CREDIT_GRANT.creditGrant
+        : (raw.extraUsage.creditGrant != null ? raw.extraUsage.creditGrant : null);
+      extraUsage = { enabled: true, monthlyLimit: raw.extraUsage.monthlyLimit,
+        usedCredits: raw.extraUsage.usedCredits, creditGrant: cg };
+    } else {
+      extraUsage = { enabled: false };
+    }
   }
 
   var d = { planName: raw.planName, fetchedAt: raw.fetchedAt || DATA.timestamp, now: now,
@@ -727,6 +747,24 @@ function renderDashboard() {
   // a high projected number under safe pace doesn't trigger a false alarm.
   html += '<div class="cards">';
   for (const q of d.quotas) {
+    // Empty / not-enabled state: the API didn't return utilisation
+    // for this bucket. Render the card stub with "—" so the user
+    // sees the catalogue without the visual machinery (bars, pace
+    // meter) lying about a value we don't have.
+    if (q.pct == null) {
+      html += '<section class="card empty">'
+        + '<div class="card-head">'
+        +   '<span class="card-title">' + _esc(q.label) + '</span>'
+        +   '<span class="aside v-2">not used</span>'
+        + '</div>'
+        + '<div class="metric">'
+        +   '<span class="m-label">quota</span>'
+        +   '<div class="bar"><div class="bar-fill" style="width:0%"></div></div>'
+        +   '<span class="m-value v-2">—</span>'
+        + '</div>'
+        + '</section>';
+      continue;
+    }
     const pace = calcPace(q.pct, q.resetAt, q.windowMs);
     const projected = pace ? pace.projected : null;
     const elapsedPct = pace ? Math.round(pace.elapsed * 100) : null;
@@ -837,7 +875,30 @@ function renderDashboard() {
   // MONTH bar (neutral). Same vertical-line markers ("now" solid,
   // "estimated end" dashed) keep the visual language consistent so a
   // reader doesn't have to learn a second card type.
-  if (d.extraUsage && d.extraUsage.enabled !== false) {
+  //
+  // When extras aren't enabled on the account (is_enabled = false), we
+  // still render an empty placeholder card so the user sees the
+  // feature exists. The placeholder explains how to turn it on.
+  if (d.extraUsage && d.extraUsage.enabled === false) {
+    html += '<section class="card money empty">'
+      + '<div class="card-head">'
+      +   '<span class="card-title">Extra usage</span>'
+      +   '<span class="aside v-2">not enabled</span>'
+      + '</div>'
+      + '<div class="metric">'
+      +   '<span class="m-label">spend</span>'
+      +   '<div class="bar"><div class="bar-fill" style="width:0%"></div></div>'
+      +   '<span class="m-value v-2">—</span>'
+      + '</div>'
+      + '<div class="ms-summary">'
+      +   '<span class="item v-2">'
+      +     'Enable overage credits on '
+      +     '<a href="https://claude.ai/settings/billing" target="_blank" rel="noopener" style="color:var(--accent)">claude.ai/settings/billing</a>'
+      +     ' to spend beyond the plan limit.'
+      +   '</span>'
+      + '</div>'
+      + '</section>';
+  } else if (d.extraUsage && d.extraUsage.enabled !== false) {
     const e = d.extraUsage;
     const monthlyLimit = e.monthlyLimit || 0;
     const used = e.usedCredits || 0;
