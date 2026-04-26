@@ -127,7 +127,10 @@ export function getEffortLevel(stdin: StdinData): string | null {
 export const PROJECT_NAME_MAX = 24;
 
 export function getProjectName(stdin: StdinData): string | null {
-  if (!stdin.cwd) return null;
+  // Trust nothing from stdin: a non-string cwd (e.g. a number on a buggy
+  // shim) would crash .split() here. Guarded the same way as model and
+  // effort_level above.
+  if (typeof stdin.cwd !== 'string' || !stdin.cwd) return null;
   const segments = stdin.cwd.split(/[/\\]/).filter(Boolean);
   if (segments.length === 0) return null;
   const name = segments[segments.length - 1];

@@ -181,6 +181,17 @@ describe('getProjectName', () => {
     const stdin: StdinData = { cwd: `/home/user/${exact}` };
     assert.equal(getProjectName(stdin), exact);
   });
+
+  // Regression: a non-string cwd (number, object, array) used to crash
+  // .split() because the truthiness guard `!stdin.cwd` lets a truthy
+  // non-string through. Mirrors the typeof guard already in getModelName /
+  // getEffortLevel.
+  test('returns null for non-string cwd values', () => {
+    assert.equal(getProjectName({ cwd: 42 } as unknown as StdinData), null);
+    assert.equal(getProjectName({ cwd: ['a', 'b'] } as unknown as StdinData), null);
+    assert.equal(getProjectName({ cwd: { path: '/x' } } as unknown as StdinData), null);
+    assert.equal(getProjectName({ cwd: true } as unknown as StdinData), null);
+  });
 });
 
 describe('parseStdinPayload', () => {
