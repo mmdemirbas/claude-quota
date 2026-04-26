@@ -365,13 +365,11 @@ main { max-width: 1100px; margin: 0 auto; }
  * tone matches the actual %. The bar.bar-time variant overrides this
  * with a neutral grey, since time-elapsed is context, not an alarm. */
 
-/* Time bar: rendered as a thin timeline so it recedes from the
- * quota bar. The eye lands on the quota (primary metric); the time
- * track sits beneath as context. Markers convert from vertical lines
- * (used on the quota bar) to dots, which feel timeline-native:
- *  - "now"  → a filled dot at the current elapsed position
- *  - "end"  → a small ring at the reset moment (right edge)
- */
+/* Time bar: a thin timeline-style track so it recedes from the
+ * quota bar. The "now" / "end" markers stay as vertical lines so
+ * they read the same way as the markers on the quota bar above —
+ * the user sights up from a time tick to a quota tick without
+ * having to translate between two visual languages. */
 .bar.bar-time {
   height: var(--bar-time-h);
   background: var(--bg-inset);
@@ -380,28 +378,6 @@ main { max-width: 1100px; margin: 0 auto; }
 .bar.bar-time .bar-fill {
   background: var(--text-3) !important;
   opacity: 0.55;
-  /* Slim hairline filling the elapsed span — same height as the track. */
-}
-.bar.bar-time .bar-now {
-  /* Override the quota-bar vertical line with a filled dot. */
-  top: 50%; bottom: auto;
-  height: 9px; width: 9px;
-  margin: -4.5px 0 0 -4.5px;
-  background: var(--text);
-  border-radius: 50%;
-  opacity: 0.95;
-}
-.bar.bar-time .bar-end {
-  /* "Reset" marker — small open ring, nudged in slightly so it
-   * doesn't get clipped by the bar's right edge. */
-  top: 50%; bottom: auto;
-  height: 7px; width: 7px;
-  margin: -3.5px 0 0 -3.5px;
-  background: transparent;
-  background-image: none;
-  border: 1.4px solid var(--text-3);
-  border-radius: 50%;
-  transform: translateX(-3.5px);
 }
 
 /* Card foot: projected-end on the left, reset (relative + absolute)
@@ -520,18 +496,6 @@ function colorForPct(pct) {
   // Hue: 150 (mint) → 60 (yellow) → 0 (red).
   var h = p <= 50 ? 150 - (p / 50) * 90 : 60 - ((p - 50) / 50) * 60;
   return 'hsl(' + h.toFixed(0) + ', 70%, 62%)';
-}
-
-// "Concern" colour for the card stripe and any non-bar accents. When
-// the user is over pace AND the projection is meaningfully higher
-// than current, we colour by the projection — that's the value that
-// will hit reality. Otherwise we colour by the current value.
-//
-// paceWord: 'under' | 'on' | 'over' | undefined.
-function concernColor(pct, projected, paceWord) {
-  var concern = (paceWord === 'over' && projected != null && projected > pct)
-    ? projected : pct;
-  return colorForPct(concern);
 }
 
 // Speedometer-arc pace gauge. Returns HTML for the card-head element
@@ -777,7 +741,10 @@ function renderDashboard() {
     // instead of a two-tone collage. Alarm signalling lives in the
     // card stripe and the pace meter; the bar just shows quantity.
     const fillColor = colorForPct(cur);
-    const stripeColor = concernColor(cur, projC, paceWord);
+    // Stripe tone tracks current usage only — projection-driven
+    // alarm now lives in the pace gauge, so the stripe stops doubling
+    // up on the same signal in red.
+    const stripeColor = colorForPct(cur);
 
     // Quota bar: solid fill, dim trail to projected (capped at 100%
     // for visual width — the actual number lives in "projected end"),
@@ -811,18 +778,21 @@ function renderDashboard() {
         + '</div>';
     }
 
-    // Card head right (top-right of quota chart): pace meter — the
-    // user's primary "should I slow down?" signal.
-    const pmHtml = paceGauge(cur, elapsedPct);
-
-    // Card foot left: projected end %. Right: reset (relative + absolute).
-    let footLeft = '';
+    // Card head right (top-right of quota chart): projected end %.
+    // Sits adjacent to the quota bar so the relationship between the
+    // current % and where it'll land is one short eye-jump.
+    let projAside = '';
     if (projected != null) {
-      footLeft = '<span class="aside">'
+      projAside = '<span class="aside">'
         + '<span class="lbl">projected end</span> '
         + '<span class="v">' + projected + '%</span>'
         + '</span>';
     }
+
+    // Card foot: pace gauge on the left (the "should I slow down?"
+    // signal, given strong visual weight by its semicircle shape),
+    // reset stack on the right.
+    const pmHtml = paceGauge(cur, elapsedPct);
     let footRight = '';
     if (q.resetAt && q.resetAt > d.now) {
       footRight = '<span class="aside stack">'
@@ -838,7 +808,7 @@ function renderDashboard() {
       foot = '<div class="card-foot empty">no active window</div>';
     } else {
       foot = '<div class="card-foot">'
-        + '<span>' + footLeft + '</span>'
+        + '<span>' + pmHtml + '</span>'
         + '<span>' + footRight + '</span>'
         + '</div>';
     }
@@ -846,7 +816,7 @@ function renderDashboard() {
     html += '<section class="card" style="--card-color:' + stripeColor + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">' + _esc(q.label) + '</span>'
-      +   pmHtml
+      +   projAside
       + '</div>'
       + '<div class="metric">'
       +   '<span class="m-label">quota</span>'
@@ -894,7 +864,10 @@ function renderDashboard() {
     const projTrailEnd = projC != null && projC > cur ? projC : null;
 
     const fillColor = colorForPct(cur);
-    const stripeColor = concernColor(cur, projC, paceWord);
+    // Stripe tone tracks current usage only — projection-driven
+    // alarm now lives in the pace gauge, so the stripe stops doubling
+    // up on the same signal in red.
+    const stripeColor = colorForPct(cur);
 
     // Spend bar — same hue policy as the quota bars: fill colour
     // tracks the current % and the dim trail uses the same colour.
@@ -910,18 +883,17 @@ function renderDashboard() {
     }
     spendBar += '</div>';
 
-    // Pace meter for the extra-usage card uses spend% vs month%.
-    const pmHtml = paceGauge(cur, elapsedPct);
-
-    // Foot left: projected month-end spend ($).
-    let footLeft = '';
+    // Card-head right: projected month-end spend.
+    let projAside = '';
     if (projectedSpend != null) {
-      footLeft = '<span class="aside">'
+      projAside = '<span class="aside">'
         + '<span class="lbl">projected end</span> '
         + '<span class="v">' + fmtMoney(projectedSpend) + '</span>'
         + '</span>';
     }
-    // Foot right: relative + absolute reset (1st of next month).
+
+    // Foot left: pace gauge. Foot right: reset stack (1st of next month).
+    const pmHtml = paceGauge(cur, elapsedPct);
     const monthEndMs = monthEndAt - d.now;
     const footRight = '<span class="aside stack">'
       + '<span><span class="lbl">resets in</span> <span class="v">' + fmt(monthEndMs) + '</span></span>'
@@ -931,7 +903,7 @@ function renderDashboard() {
     html += '<section class="card money" style="--card-color:' + stripeColor + '">'
       + '<div class="card-head">'
       +   '<span class="card-title">Extra usage</span>'
-      +   pmHtml
+      +   projAside
       + '</div>'
       + '<div class="metric">'
       +   '<span class="m-label">spend</span>'
@@ -948,7 +920,7 @@ function renderDashboard() {
       +   '<span class="m-value">' + elapsedPct + '<span class="m-unit">%</span></span>'
       + '</div>'
       + '<div class="card-foot">'
-      +   '<span>' + footLeft + '</span>'
+      +   '<span>' + pmHtml + '</span>'
       +   '<span>' + footRight + '</span>'
       + '</div>'
       + '<div class="ms-summary">'
