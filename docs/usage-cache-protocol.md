@@ -277,8 +277,17 @@ credential does nothing and reports no usage. That is not an error state.
 ## 7. Versioning
 
 `schemaVersion` is 1. A participant reading a file whose `schemaVersion` exceeds
-what it implements MUST treat the cache as absent and MUST NOT overwrite it —
-otherwise an old tool left running downgrades the file for everyone.
+what it implements MUST **stand down**: serve nothing, fetch nothing, write
+nothing. Not "treat it as absent" — absent means *go and fetch*, and a
+participant that fetched would have nowhere to put the result except on top of
+a file it does not understand, downgrading it for everyone else.
+
+Standing down means an old tool shows no quota while a newer one is present.
+That is the correct trade: the newer participant is keeping the reading current,
+so the numbers exist, and the old tool simply is not the one to show them. If
+the newer tool is later removed, the file is stale and nothing will replace it —
+delete it and the next participant starts clean. Implementations SHOULD warn
+when they stand down, so that state is diagnosable rather than mysterious.
 
 Additive changes — a new bucket key, a new optional top-level field — do not bump
 the version. Anything that changes the meaning of an existing field does.

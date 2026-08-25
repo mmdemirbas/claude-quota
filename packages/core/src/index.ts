@@ -44,6 +44,8 @@ export {
 // The on-disk entry, for tools that want to inspect rather than render.
 export {
   readEntry,
+  readEntryStatus,
+  type EntryRead,
   readCache,
   backoffUntil,
   bumpTimestamp,

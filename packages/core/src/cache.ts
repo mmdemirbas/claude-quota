@@ -136,49 +136,71 @@ function coerceReading(v: unknown): Reading | null {
 }
 
 /**
+ * The three states `usage.json` can be in, kept distinct because they call for
+ * different behaviour and conflating two of them is how a file gets destroyed.
+ *
+ * `absent` and `future` both mean "nothing this build can serve", but only
+ * `absent` means "go and fetch one". A `future` entry belongs to a newer
+ * participant that is already keeping it current; fetching would add request
+ * rate for a reading this build cannot store, and writing would downgrade the
+ * file for the participant that can.
+ */
+export type EntryRead =
+  | { kind: 'absent' }
+  | { kind: 'future'; version: number }
+  | { kind: 'entry'; entry: CacheEntry };
+
+/**
  * Parse `usage.json` with no interpretation of freshness.
  *
- * Returns null when the file is absent, refused by the safety check,
- * unparseable, or written by a newer schema than this build understands.
- * The last case is deliberate: an old participant that overwrote a newer file
- * would downgrade it for every other participant on the machine.
+ * Protocol §7. A file this build cannot vouch for — refused by the safety
+ * check, unparseable, or from a newer schema — is never partially interpreted.
  */
-export function readEntry(): CacheEntry | null {
+export function readEntryStatus(): EntryRead {
   const raw = readFileSecure(usageCachePath(), (reason) => {
     warn('usage cache rejected', { reason });
   });
-  if (raw == null) return null;
+  if (raw == null) return { kind: 'absent' };
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return null;
+    return { kind: 'absent' };
   }
-  if (parsed == null || typeof parsed !== 'object') return null;
+  if (parsed == null || typeof parsed !== 'object') return { kind: 'absent' };
 
   const o = parsed as Record<string, unknown>;
   const version = typeof o.schemaVersion === 'number' ? o.schemaVersion : 0;
   if (version > SCHEMA_VERSION) {
-    warn('usage cache written by a newer schema; ignoring', { version });
-    return null;
+    warn('usage cache written by a newer schema; standing down', { version });
+    return { kind: 'future', version };
   }
-  if (typeof o.timestamp !== 'number' || !Number.isFinite(o.timestamp)) return null;
+  if (typeof o.timestamp !== 'number' || !Number.isFinite(o.timestamp)) return { kind: 'absent' };
 
   const backoff = (o.backoff ?? {}) as Record<string, unknown>;
   return {
-    ...o,
-    schemaVersion: version,
-    timestamp: o.timestamp,
-    reading: coerceReading(o.reading),
-    lastGood: coerceReading(o.lastGood),
-    backoff: {
-      rateLimitedCount:
-        typeof backoff.rateLimitedCount === 'number' ? backoff.rateLimitedCount : 0,
-      retryAfterUntil:
-        typeof backoff.retryAfterUntil === 'number' ? backoff.retryAfterUntil : null,
+    kind: 'entry',
+    entry: {
+      ...o,
+      schemaVersion: version,
+      timestamp: o.timestamp,
+      reading: coerceReading(o.reading),
+      lastGood: coerceReading(o.lastGood),
+      backoff: {
+        rateLimitedCount:
+          typeof backoff.rateLimitedCount === 'number' ? backoff.rateLimitedCount : 0,
+        retryAfterUntil:
+          typeof backoff.retryAfterUntil === 'number' ? backoff.retryAfterUntil : null,
+      },
     },
   };
+}
+
+/** The entry, or null for anything this build cannot serve. */
+export function readEntry(): CacheEntry | null {
+  const read = readEntryStatus();
+  return read.kind === 'entry' ? read.entry : null;
 }
 
 /**
@@ -257,8 +279,13 @@ function blankEntry(now: number): CacheEntry {
  * unknown top-level keys survive a write by a participant that does not know
  * what they mean (§2).
  */
-export function updateEntry(now: number, mutate: (entry: CacheEntry) => void): CacheEntry {
-  const entry = readEntry() ?? blankEntry(now);
+export function updateEntry(now: number, mutate: (entry: CacheEntry) => void): CacheEntry | null {
+  const read = readEntryStatus();
+  // Refuse to downgrade a file written by a newer participant (§7). Every
+  // caller here is on a path that would otherwise replace it wholesale.
+  if (read.kind === 'future') return null;
+
+  const entry = read.kind === 'entry' ? read.entry : blankEntry(now);
   entry.schemaVersion = SCHEMA_VERSION;
   mutate(entry);
   ensureUsageDir();
@@ -276,7 +303,7 @@ export function updateEntry(now: number, mutate: (entry: CacheEntry) => void): C
  */
 export function bumpTimestamp(now: number): void {
   const entry = readEntry();
-  if (entry === null) return;
+  if (entry === null) return; // absent, or a newer schema we must not touch
   // A non-429 failure has a 15s TTL that already does this job. Bumping it
   // would stretch a failure entry to the full 2 minutes.
   if (entry.reading?.error != null && entry.backoff.rateLimitedCount === 0) return;

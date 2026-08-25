@@ -6,6 +6,7 @@ import {
   migrateLegacyCache,
   priorBuckets,
   readCache,
+  readEntryStatus,
   toReading,
   toUsageData,
   updateEntry,
@@ -107,6 +108,13 @@ export async function getUsage(opts?: GetUsageOpts): Promise<UsageResult> {
   }
 
   const none: UsageResult = { data: null, isStale: false, source: 'none' };
+
+  // A newer participant owns this file (§7). It is keeping the reading current
+  // and this build cannot store what it would fetch, so stand down rather than
+  // spend a request and then overwrite a file we do not understand. Recovering
+  // from a stale future-schema file — the newer tool having been removed — is a
+  // matter of deleting it, which is why this warns rather than failing silently.
+  if (readEntryStatus().kind === 'future') return none;
 
   // ANTHROPIC_BASE_URL is deliberately ignored: the OAuth usage endpoint is
   // tied to anthropic.com and does not exist behind a proxy or gateway. A user
@@ -223,6 +231,8 @@ function writeFailure(
 
   let lastGood: UsageData | null = null;
 
+  // `updateEntry` returns null when it refused to write — see §7. The failure
+  // is still worth returning to the caller; it just does not get recorded.
   updateEntry(now, (entry) => {
     lastGood = entry.lastGood ? toUsageData(entry.lastGood) : null;
     entry.timestamp = now;
