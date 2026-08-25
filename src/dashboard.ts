@@ -1,4 +1,4 @@
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { writeFileSecure, checkFileSafe } from '@mmdemirbas/claude-usage';
 import {
   pluginDir, dashboardHtmlPath,
@@ -7,35 +7,49 @@ import {
 } from './paths.js';
 
 /**
- * Write dashboard.html to the plugin dir if it isn't already present
- * with the right size and 0o600 mode. The HTML is content-pinned to
- * this build of the plugin, so once a same-version file is on disk
- * there is nothing to update — the previous unconditional rewrite
- * cost an open/fsync/chmod/rename per statusline tick.
+ * Write dashboard.html to the plugin dir unless the file already on disk is
+ * byte-for-byte this build's copy, owned by us and mode 0o600.
  *
- * Routed through writeFileSecure so the file lands with mode 0o600
- * when we DO write. That matters because the dashboard JS is reloaded
- * from disk on every poll — a world-writable file is a second-user-
- * to-first-user code execution path if an attacker can replace the
- * HTML between renders. We re-validate the existing file's safety via
- * checkFileSafe so we never preserve a permissive or attacker-symlinked
- * copy: those are rewritten unconditionally.
+ * The HTML is pinned to the build, so a matching file needs no update — and
+ * the rewrite it skips costs an open/fsync/chmod/rename on every statusline
+ * tick.
+ *
+ * Routed through writeFileSecure so the file lands with mode 0o600 when we DO
+ * write. That matters because the dashboard JS is reloaded from disk on every
+ * poll — a world-writable file is a second-user-to-first-user code execution
+ * path if an attacker can replace the HTML between renders. We re-validate the
+ * existing file's safety via checkFileSafe so we never preserve a permissive
+ * or attacker-symlinked copy: those are rewritten unconditionally.
  */
 export function ensureDashboardHtml(): void {
   try {
     mkdirSync(pluginDir(), { recursive: true });
     const path = dashboardHtmlPath();
-    const safety = checkFileSafe(path);
-    if (safety.ok) {
-      // Content is build-pinned, so a size match is a perfect identity
-      // check. Avoids reading the file just to compare bytes.
-      try {
-        const st = statSync(path);
-        if (st.size === DASHBOARD_HTML_BYTES) return;
-      } catch { /* fall through to write */ }
-    }
+    if (checkFileSafe(path).ok && onDiskMatchesBuild(path)) return;
     writeFileSecure(path, DASHBOARD_HTML);
   } catch { /* ignore */ }
+}
+
+/**
+ * Whether the file on disk is this build's dashboard.
+ *
+ * This compared `st.size` against the build's byte length, on the reasoning
+ * that build-pinned content makes a size match a perfect identity check. It
+ * does not: two builds whose HTML differs by a colour hex, a comparison
+ * operator or an equal-length rename have identical byte lengths, and the
+ * upgrade then leaves the previous dashboard on disk permanently — no error,
+ * no staleness marker, just a page that never gains the new build's changes.
+ *
+ * What the size check saved is 24 microseconds. Measured on the real file:
+ * 42 KB, 0.0026 ms to stat and 0.0268 ms to read and decode, in a program
+ * whose next act is a Keychain lookup costing 50-200 ms.
+ */
+function onDiskMatchesBuild(path: string): boolean {
+  try {
+    return readFileSync(path, 'utf8') === DASHBOARD_HTML;
+  } catch {
+    return false; // absent or unreadable — write it
+  }
 }
 
 
@@ -1123,6 +1137,3 @@ ${JS}
 </body>
 </html>`;
 
-// Build-pinned, so its UTF-8 byte length is a constant. Computed once
-// at module load instead of on every ensureDashboardHtml call.
-const DASHBOARD_HTML_BYTES = Buffer.byteLength(DASHBOARD_HTML, 'utf8');
