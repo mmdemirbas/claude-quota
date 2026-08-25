@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { getUsage, readCachedUsage, readReadings, type FetchApiFn } from '../src/index.js';
 import { readingsPath, usageCachePath, usageDir } from '../src/paths.js';
-import { appendReading } from '../src/readings.js';
+import { appendReading, lastReadingAt } from '../src/readings.js';
 import {
   CACHE_SOFT_TTL_MS,
   CACHE_TTL_MS,
@@ -469,6 +469,88 @@ describe('usage cache protocol v1', { skip: !isPosix }, () => {
     assert.ok(kept.length < count, 'ancient readings must be dropped');
     assert.ok(kept.every((r) => r.fetchedAt >= now - READINGS_RETENTION_MS));
     assert.equal(kept.at(-1)?.fetchedAt, now, 'the newest reading survives compaction');
+  });
+
+  test('§3.1 compaction ends under the cap even when the retention window does not fit', () => {
+    // The failure this pins. At the highest sustainable fetch rate, thirty days
+    // of readings is larger than the size cap. An age-only compaction removes
+    // nothing, leaves the file over the threshold, and runs again on the next
+    // append — rewriting megabytes every couple of minutes, forever.
+    const now = Date.now();
+    const seed: Reading = {
+      fetchedAt: now,
+      planName: 'Max 20x',
+      buckets: { fiveHour: { utilization: 5, resetsAt: new Date(now).toISOString() } },
+      extraUsage: null,
+      error: null,
+    };
+
+    // Every reading is *inside* the retention window, so age drops none of them.
+    const perLine = JSON.stringify(seed).length + 1;
+    const count = Math.ceil((READINGS_COMPACT_BYTES / perLine) * 1.4);
+    const lines: string[] = [];
+    for (let i = 0; i < count; i++) {
+      lines.push(JSON.stringify({ ...seed, fetchedAt: now - (count - i) * 1000 }));
+    }
+    fs.mkdirSync(usageDir(), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(readingsPath(), lines.join('\n') + '\n', { mode: 0o600 });
+    fs.chmodSync(readingsPath(), 0o600);
+    assert.ok(fs.statSync(readingsPath()).size > READINGS_COMPACT_BYTES);
+
+    assert.equal(appendReading({ ...seed, fetchedAt: now }), true);
+
+    const after = fs.statSync(readingsPath()).size;
+    assert.ok(after <= READINGS_COMPACT_BYTES, `compaction must get under the cap, got ${after}`);
+    assert.equal(readReadings().at(-1)?.fetchedAt, now, 'the newest reading survives');
+
+    // And the next append must not re-trigger a rewrite: if it did, the file
+    // would be back over the cap and we would be in the same loop.
+    const sizeBefore = fs.statSync(readingsPath()).size;
+    appendReading({ ...seed, fetchedAt: now + 1000 });
+    const sizeAfter = fs.statSync(readingsPath()).size;
+    assert.ok(
+      sizeAfter > sizeBefore && sizeAfter <= READINGS_COMPACT_BYTES,
+      'a following append should just append, not compact again',
+    );
+  });
+
+  test('lastReadingAt reads the tail and agrees with a full parse', () => {
+    const now = Date.now();
+    const seed: Reading = {
+      fetchedAt: now, planName: 'Max 20x',
+      buckets: { fiveHour: { utilization: 5, resetsAt: null } },
+      extraUsage: null, error: null,
+    };
+    fs.mkdirSync(usageDir(), { recursive: true, mode: 0o700 });
+
+    // Empty, one line, and a file far larger than the tail window.
+    fs.writeFileSync(readingsPath(), '', { mode: 0o600 });
+    fs.chmodSync(readingsPath(), 0o600);
+    assert.equal(lastReadingAt(), null, 'an empty log has no last reading');
+
+    fs.writeFileSync(readingsPath(), JSON.stringify(seed) + '\n', { mode: 0o600 });
+    assert.equal(lastReadingAt(), now);
+
+    const many: string[] = [];
+    for (let i = 0; i < 2000; i++) many.push(JSON.stringify({ ...seed, fetchedAt: now - (2000 - i) }));
+    fs.writeFileSync(readingsPath(), many.join('\n') + '\n', { mode: 0o600 });
+    assert.ok(fs.statSync(readingsPath()).size > 64 * 1024, 'test needs a log past the tail window');
+    assert.equal(lastReadingAt(), readReadings().at(-1)?.fetchedAt);
+  });
+
+  test('lastReadingAt walks back past a torn final line', () => {
+    const now = Date.now();
+    const seed: Reading = {
+      fetchedAt: now, planName: 'Max 20x',
+      buckets: { fiveHour: { utilization: 5, resetsAt: null } },
+      extraUsage: null, error: null,
+    };
+    fs.mkdirSync(usageDir(), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(readingsPath(), JSON.stringify(seed) + '\n', { mode: 0o600 });
+    fs.chmodSync(readingsPath(), 0o600);
+    fs.appendFileSync(readingsPath(), '{"fetchedAt":99999999,"buck');
+
+    assert.equal(lastReadingAt(), now, 'a half-written record must not be taken as the newest');
   });
 
   // ── §6 Credentials ───────────────────────────────────────────────────────

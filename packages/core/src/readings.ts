@@ -44,11 +44,68 @@ export function appendReading(reading: Reading): boolean {
   return true;
 }
 
-/** `fetchedAt` of the newest line, or null when the log is empty or unreadable. */
+/**
+ * `fetchedAt` of the newest line, or null when the log is empty or unreadable.
+ *
+ * Reads the tail rather than the file. This runs on every append, and an append
+ * runs inside a statusline redraw that has a few hundred milliseconds to spend
+ * in total — parsing a multi-megabyte log to learn one number is the kind of
+ * cost that does not show up until the log has been accumulating for a month.
+ *
+ * Sound because the file is append-ordered: `appendReading` refuses anything
+ * that does not advance `fetchedAt`, and compaction rewrites in order. If the
+ * tail happens to hold no complete line, fall back to reading properly rather
+ * than guessing.
+ */
+const TAIL_BYTES = 64 * 1024;
+
 export function lastReadingAt(): number | null {
-  const all = readReadings();
-  const last = all[all.length - 1];
-  return last?.fetchedAt ?? null;
+  const path = readingsPath();
+  const safety = checkFileSafe(path);
+  if (!safety.ok) return null;
+
+  let fd: number | undefined;
+  try {
+    const size = fs.statSync(path).size;
+    if (size === 0) return null;
+
+    const length = Math.min(size, TAIL_BYTES);
+    const buf = Buffer.alloc(length);
+    fd = fs.openSync(path, 'r');
+    fs.readSync(fd, buf, 0, length, size - length);
+    fs.closeSync(fd);
+    fd = undefined;
+
+    const text = buf.toString('utf8');
+    // Drop a leading partial line when the window started mid-record. Only
+    // safe when the window did not cover the whole file.
+    const lines = (length < size ? text.slice(text.indexOf('\n') + 1) : text).split('\n');
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (line === undefined || line === '') continue;
+      try {
+        const parsed = JSON.parse(line) as Reading;
+        if (typeof parsed.fetchedAt === 'number' && Number.isFinite(parsed.fetchedAt)) {
+          return parsed.fetchedAt;
+        }
+      } catch { /* torn or truncated line — keep walking back */ }
+    }
+
+    // The window held nothing usable. Either every line in it is damaged or a
+    // single record is larger than the window; a full read settles which.
+    if (length < size) {
+      const all = readReadings();
+      return all[all.length - 1]?.fetchedAt ?? null;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
+  }
 }
 
 /**
@@ -93,12 +150,24 @@ export function readReadings(sinceMs = 0): Reading[] {
 }
 
 /**
- * Drop readings older than the retention window once the file grows past the
- * compaction threshold.
+ * Bring the log back under its size cap, dropping the oldest readings.
+ *
+ * Two bounds apply and they are not equals. Age is what we would *like* to
+ * keep; size is what the file may actually cost everyone else. Age alone
+ * cannot terminate: at the highest sustainable fetch rate — one per hard TTL,
+ * 720 a day — thirty days of readings is about 7 MB, well over the 4 MB cap. A
+ * compaction that only drops by age would then remove nothing, leave the file
+ * over the threshold, and run again on the very next append, rewriting several
+ * megabytes every two minutes for as long as the machine is in use.
+ *
+ * So age is applied first, and if the result is still too large the oldest
+ * survivors are dropped until it fits. That makes progress guaranteed: every
+ * compaction ends under the cap, so the next one is not due until the file has
+ * grown again.
  *
  * Called only from `appendReading`, so it runs under the fetch lock and cannot
- * race an append. `statSync` first because the common case is a small file and
- * a stat is far cheaper than a parse.
+ * race an append. `statSync` first because the common case is a file well under
+ * the cap, and a stat is far cheaper than a parse.
  */
 function compactIfNeeded(now: number = Date.now()): void {
   let size: number;
@@ -109,9 +178,29 @@ function compactIfNeeded(now: number = Date.now()): void {
   }
   if (size <= READINGS_COMPACT_BYTES) return;
 
-  const kept = readReadings(now - READINGS_RETENTION_MS);
+  let kept = readReadings(now - READINGS_RETENTION_MS);
   if (kept.length === 0) return;
-  const body = kept.map((r) => JSON.stringify(r)).join('\n');
-  writeFileSecure(readingsPath(), `${body}\n`);
-  warn('compacted readings log', { from: size, kept: kept.length });
+
+  const encode = (rs: Reading[]): string => `${rs.map((r) => JSON.stringify(r)).join('\n')}\n`;
+
+  // Still too big after the age pass: drop from the front until it fits. The
+  // target leaves headroom so the next append does not immediately re-trigger.
+  let body = encode(kept);
+  if (Buffer.byteLength(body) > READINGS_COMPACT_BYTES) {
+    const target = Math.floor(READINGS_COMPACT_BYTES * 0.8);
+    const perLine = Buffer.byteLength(body) / kept.length;
+    const fits = Math.max(1, Math.floor(target / perLine));
+    kept = kept.slice(-fits);
+    body = encode(kept);
+    // Line widths vary, so the estimate can still overshoot. Trim the rest off
+    // one bite at a time; this loop is bounded by kept.length and each pass
+    // strictly shrinks it.
+    while (kept.length > 1 && Buffer.byteLength(body) > READINGS_COMPACT_BYTES) {
+      kept = kept.slice(Math.ceil(kept.length * 0.1));
+      body = encode(kept);
+    }
+  }
+
+  writeFileSecure(readingsPath(), body);
+  warn('compacted readings log', { fromBytes: size, toBytes: Buffer.byteLength(body), kept: kept.length });
 }
