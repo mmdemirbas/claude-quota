@@ -169,6 +169,8 @@ export interface CreditGrantApiResponse {
 }
 
 export interface ProfileCacheFile {
+  /** Cache-shape marker. Present means the tier fields were stored deliberately. */
+  v?: number;
   orgUUID: string;
   rateLimitTier?: string;
   organizationType?: string;

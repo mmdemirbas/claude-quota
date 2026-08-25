@@ -34,6 +34,8 @@ export function appendReading(reading: Reading): boolean {
   if (last !== null && reading.fetchedAt <= last) return false;
 
   ensureUsageDir();
+  if (!healPermissions()) return false;
+
   const line = `${JSON.stringify(reading)}\n`;
   try {
     fs.appendFileSync(readingsPath(), line, { mode: 0o600, flag: 'a' });
@@ -41,6 +43,51 @@ export function appendReading(reading: Reading): boolean {
     return false;
   }
   compactIfNeeded();
+  return true;
+}
+
+/**
+ * Make sure the log is still a file we are willing to read.
+ *
+ * `appendFileSync` checks nothing, while every read here goes through
+ * `checkFileSafe`. Those two disagreeing is a trap: a log that picks up a group
+ * or world bit — restored from a backup, copied between machines, rsynced
+ * without `-p` — becomes unreadable to `readReadings`, so reads return empty,
+ * `lastReadingAt` returns null and compaction takes its "nothing kept" early
+ * exit, *while appends keep succeeding*. The file then grows without bound,
+ * nothing will ever read it again, and the monotonicity guard is silently off,
+ * which also breaks the append-ordering the tail read depends on.
+ *
+ * The file is ours in a 0700 directory, so a permissive mode is an accident
+ * rather than an intention: fix it. A symlink or another user's file is not an
+ * accident — refuse those.
+ */
+function healPermissions(): boolean {
+  const path = readingsPath();
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(path);
+  } catch {
+    return true; // absent; the append creates it 0600
+  }
+
+  if (st.isSymbolicLink()) {
+    warn('readings log is a symlink; refusing to append', { path });
+    return false;
+  }
+  const getuid = (process as NodeJS.Process & { getuid?: () => number }).getuid;
+  if (typeof getuid === 'function' && st.uid !== getuid.call(process)) {
+    warn('readings log is owned by another user; refusing to append', { path });
+    return false;
+  }
+  if ((st.mode & 0o077) !== 0) {
+    try {
+      fs.chmodSync(path, 0o600);
+      warn('readings log had group/world bits; tightened to 0600', { path });
+    } catch {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -72,14 +119,19 @@ export function lastReadingAt(): number | null {
     const length = Math.min(size, TAIL_BYTES);
     const buf = Buffer.alloc(length);
     fd = fs.openSync(path, 'r');
-    fs.readSync(fd, buf, 0, length, size - length);
+    // Use the count actually read. Discarding it leaves NUL padding in the
+    // buffer on a short read, which makes the final line unparseable — and the
+    // walk-back then returns an *older* fetchedAt than the true last line,
+    // which lets a duplicate append through.
+    const read = fs.readSync(fd, buf, 0, length, size - length);
     fs.closeSync(fd);
     fd = undefined;
+    if (read <= 0) return null;
 
-    const text = buf.toString('utf8');
+    const text = buf.subarray(0, read).toString('utf8');
     // Drop a leading partial line when the window started mid-record. Only
     // safe when the window did not cover the whole file.
-    const lines = (length < size ? text.slice(text.indexOf('\n') + 1) : text).split('\n');
+    const lines = (read < size ? text.slice(text.indexOf('\n') + 1) : text).split('\n');
 
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
@@ -94,7 +146,7 @@ export function lastReadingAt(): number | null {
 
     // The window held nothing usable. Either every line in it is damaged or a
     // single record is larger than the window; a full read settles which.
-    if (length < size) {
+    if (read < size) {
       const all = readReadings();
       return all[all.length - 1]?.fetchedAt ?? null;
     }
@@ -199,8 +251,20 @@ function compactIfNeeded(now: number = Date.now()): void {
       kept = kept.slice(Math.ceil(kept.length * 0.1));
       body = encode(kept);
     }
+    if (Buffer.byteLength(body) > READINGS_COMPACT_BYTES) {
+      // A single reading larger than the whole cap. Nothing here can fix that,
+      // and it would otherwise re-run a full compaction on every append with no
+      // way to make progress — so say it out loud rather than churning quietly.
+      warn('a single reading exceeds the log size cap', {
+        bytes: Buffer.byteLength(body),
+        cap: READINGS_COMPACT_BYTES,
+      });
+    }
   }
 
-  writeFileSecure(readingsPath(), body);
+  if (!writeFileSecure(readingsPath(), body)) {
+    warn('could not compact the readings log', { path: readingsPath() });
+    return;
+  }
   warn('compacted readings log', { fromBytes: size, toBytes: Buffer.byteLength(body), kept: kept.length });
 }

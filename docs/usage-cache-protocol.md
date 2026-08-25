@@ -262,15 +262,47 @@ exactly the redundant traffic this exists to stop.
    backoff until `min(retryAfterUntil ?? timestamp + derivedBackoff, timestamp +
    24h)`. Before that instant: serve `lastGood` marked rate-limited, never
    fetch. After it: treat as nothing cached.
+
+   **"Never fetch" admits no exception, including an explicitly forced
+   refresh.** A participant that offers a force/refresh entry point MUST check
+   the backoff there too. Anything on the machine can invoke such an entry
+   point, so this cannot be left to callers being careful — and each request
+   made inside an active backoff escalates `rateLimitedCount` for every
+   participant, not just the one that made it.
 3. Otherwise, with `ttl` = failure TTL when `reading.error` is set, hard TTL
-   when it is not: serve if `now - timestamp < ttl`, with `isStale` set when
-   `now - timestamp >= softTtl` and the reading is a success.
+   when it is not: serve if `|now - timestamp| < ttl`, with `isStale` set when
+   `|now - timestamp| >= softTtl` and the reading is a success.
+
+   The magnitude is deliberate. An entry written while the machine's clock was
+   fast — VM resume, RTC drift, a manual change — is stamped in the future, and
+   a plain subtraction then yields a negative age: smaller than any TTL, so
+   every participant serves that reading as fresh and never marks it stale, for
+   as long as the skew lasts. Measured at an hour of skew: fresh for the whole
+   hour. Taking the magnitude makes a future-dated entry read as old, so the
+   next participant refetches and the entry heals.
+
+   **When `reading.error` is set and `lastGood` is present, serve `lastGood`**
+   with the error attached, whatever the error was. Blanking a quota display
+   over one HTTP 500, with a twenty-second-old reading on disk, discards
+   information the participant is still holding — which is the situation
+   `lastGood` exists for (§2).
 
 **Bump before fetch.** A participant that has taken the lock rewrites
 `usage.json` with `timestamp = now` and everything else unchanged, *before*
 issuing the request. Peers reading during the flight see a fresh entry and do
 not queue their own refresh. The reading itself is untouched, so nobody is told
 a number that was not measured.
+
+"Everything else unchanged" is literal, and it is easy to get wrong: a
+participant that re-serialises its *parsed* representation of the entry will
+drop any field it does not model. Entry-level keys are easy to preserve; keys
+nested inside `reading` and `lastGood` are the ones that get lost. Edit the
+timestamp on the raw JSON.
+
+**A participant MUST NOT bump without holding the lock.** The bump is a
+read-modify-write, and performing it unlocked lets it replace a peer's freshly
+written reading with an older one under a new timestamp — which then survives
+for a full hard TTL it did not earn.
 
 **429.** Increment `rateLimitedCount`, set `retryAfterUntil` from the server's
 `Retry-After` when present, otherwise to `now + jitteredBackoff(count)`.
@@ -313,7 +345,9 @@ account's will do. Falling back reads one account's usage into another
 account's cache, and nothing downstream can detect it. Show no quota instead.
 
 A participant MUST treat a credential with `expiresAt` in the past, or a
-non-numeric `expiresAt`, as absent. No participant refreshes the token; that is
+present-but-non-numeric `expiresAt`, as absent. An *absent* `expiresAt` is
+accepted: some credential shapes omit it, and refusing those would break
+authentication that works. No participant refreshes the token; that is
 Claude Code's job.
 
 `ANTHROPIC_BASE_URL` is deliberately ignored — the OAuth usage endpoint is tied

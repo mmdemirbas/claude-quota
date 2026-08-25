@@ -177,3 +177,24 @@ export async function fetchJson<T>(urlPath: string, accessToken: string): Promis
   try { return JSON.parse(outcome.body) as T; }
   catch { return null; }
 }
+
+/**
+ * Like `fetchJson`, but says whether the server answered.
+ *
+ * `fetchJson` collapses a 429, a 500, a timeout and a parse failure into the
+ * same `null` a legitimately-empty body produces. A caller that caches its
+ * result then stores a transient failure as a fact — see `getCreditGrant`,
+ * where doing so hid a real prepaid balance for twenty-four hours.
+ */
+export async function fetchJsonOutcome<T>(
+  urlPath: string,
+  accessToken: string,
+): Promise<{ ok: true; data: T | null } | { ok: false }> {
+  const outcome = await requestApi(urlPath, accessToken);
+  if (outcome.kind !== 'ok') return { ok: false };
+  try {
+    return { ok: true, data: JSON.parse(outcome.body) as T };
+  } catch {
+    return { ok: false };
+  }
+}

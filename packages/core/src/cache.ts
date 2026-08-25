@@ -246,12 +246,29 @@ export function readCache(
   }
 
   const ttl = entry.reading.error !== null ? CACHE_FAILURE_TTL_MS : CACHE_TTL_MS;
-  const age = now - entry.timestamp;
+
+  /*
+   * Age is measured in absolute terms, because it can legitimately be negative.
+   *
+   * A fetch that completes while the machine's clock is fast — VM resume, RTC
+   * drift, a manual change — leaves an entry stamped in the future. NTP then
+   * steps the clock back, and `now - timestamp` is negative for as long as the
+   * skew lasts: smaller than any TTL, so every participant serves that reading
+   * as fresh, never marks it stale, and never reaches the lock. Measured with
+   * an hour of skew: served as fresh, `isStale` false, for the whole hour.
+   *
+   * Taking the magnitude makes a future-dated entry look old rather than
+   * eternally new, so the next participant refetches and the entry heals.
+   */
+  const age = Math.abs(now - entry.timestamp);
   if (age >= ttl) return null;
 
+  // Any failure, not only a 429, keeps showing the last real numbers. See the
+  // note in usage.ts writeFailure: blanking a quota display over one HTTP 500
+  // throws away information we still hold.
   const display =
-    entry.reading.error === 'rate-limited' && entry.lastGood
-      ? { ...toUsageData(entry.lastGood), apiError: 'rate-limited' as const }
+    entry.reading.error !== null && entry.lastGood
+      ? { ...toUsageData(entry.lastGood), apiError: entry.reading.error, apiUnavailable: true }
       : toUsageData(entry.reading);
 
   /*
@@ -309,7 +326,13 @@ export function updateEntry(now: number, mutate: (entry: CacheEntry) => void): C
   entry.schemaVersion = SCHEMA_VERSION;
   mutate(entry);
   ensureUsageDir();
-  writeFileSecure(usageCachePath(), JSON.stringify(entry));
+  // A swallowed write failure is how a 429 counter stops escalating: every
+  // participant re-reads an unchanged file, writes 1, fails, and fetches again
+  // — hammering a rate-limited endpoint with nothing on screen saying why.
+  if (!writeFileSecure(usageCachePath(), JSON.stringify(entry))) {
+    warn('could not write the usage cache', { path: usageCachePath() });
+    return null;
+  }
   return entry;
 }
 
@@ -322,20 +345,58 @@ export function updateEntry(now: number, mutate: (entry: CacheEntry) => void): C
  * was never measured.
  */
 export function bumpTimestamp(now: number): void {
-  const entry = readEntry();
-  if (entry === null) return; // absent, or a newer schema we must not touch
+  /*
+   * Re-serialising the *parsed* entry would not be inert.
+   *
+   * `coerceReading` rebuilds a reading from the five fields this build knows,
+   * so anything a newer peer added inside `reading` or `lastGood` is dropped on
+   * write. Entry-level keys survive — `readEntryStatus` spreads them — but one
+   * level down they did not, and §7 permits a peer at the same schema version
+   * to add fields. The bump is documented as changing the timestamp and nothing
+   * else, so it edits the raw JSON instead of a reconstruction of it.
+   */
+  const raw = readFileSecure(usageCachePath());
+  if (raw === null) return;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+  if (parsed === null || typeof parsed !== 'object') return;
+
+  const o = parsed as Record<string, unknown>;
+  const version = typeof o.schemaVersion === 'number' ? o.schemaVersion : 0;
+  if (version > SCHEMA_VERSION) return; // a newer schema is not ours to touch
+
   // A non-429 failure has a 15s TTL that already does this job. Bumping it
   // would stretch a failure entry to the full 2 minutes.
-  if (entry.reading?.error != null && entry.backoff.rateLimitedCount === 0) return;
-  entry.timestamp = now;
+  const reading = o.reading as { error?: unknown } | null | undefined;
+  const backoff = (o.backoff ?? {}) as { rateLimitedCount?: unknown };
+  const count = typeof backoff.rateLimitedCount === 'number' ? backoff.rateLimitedCount : 0;
+  if (reading?.error != null && count === 0) return;
+
+  o.timestamp = now;
   ensureUsageDir();
-  writeFileSecure(usageCachePath(), JSON.stringify(entry));
+  writeFileSecure(usageCachePath(), JSON.stringify(o));
 }
 
 /** Buckets from the newest reading on disk, so an unknown key survives our write. */
 export function priorBuckets(): Record<string, BucketReading | null> | undefined {
   const entry = readEntry();
-  return entry?.reading?.buckets ?? entry?.lastGood?.buckets;
+  if (entry === null) return undefined;
+
+  // `?? entry.lastGood?.buckets` never fired: coerceReading guarantees an
+  // object, `{}` at minimum, so an empty bucket map on a failure reading
+  // shadowed a populated one on lastGood — and the unknown bucket this
+  // function exists to carry forward was dropped on the next write. Merge
+  // instead, newest winning.
+  const carried: Record<string, BucketReading | null> = { ...(entry.lastGood?.buckets ?? {}) };
+  for (const [key, value] of Object.entries(entry.reading?.buckets ?? {})) {
+    carried[key] = value;
+  }
+  return Object.keys(carried).length > 0 ? carried : undefined;
 }
 
 // ── Legacy import ──────────────────────────────────────────────────────────
@@ -353,7 +414,17 @@ export function priorBuckets(): Record<string, BucketReading | null> | undefined
  * bug here.
  */
 export function migrateLegacyCache(now: number): boolean {
-  if (readEntry() !== null) return false;
+  /*
+   * `readEntryStatus`, not `readEntry`: the latter collapses "absent" and
+   * "written by a newer schema" into null, and those must not be confused here
+   * of all places. This function's whole job is to write, and it runs before
+   * `getUsage`'s stand-down check — so using `readEntry` meant a v2 file was
+   * replaced by a legacy v1 reading on any machine that had ever run the
+   * pre-protocol plugin, taking its unknown buckets, its unknown fields and an
+   * active 429 backoff with it. Worse, the build then no longer detected a
+   * newer schema, so §7's stand-down was defeated permanently for everyone.
+   */
+  if (readEntryStatus().kind !== 'absent') return false;
 
   const raw = readFileSecure(legacyCachePath());
   if (raw == null) return false;

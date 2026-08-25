@@ -149,19 +149,72 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
   test('500 between two 429s preserves the backoff counter and last-good snapshot', async () => {
     const calls = { count: 0 };
 
-    // Bootstrap with a successful fetch.
+    // Each failure has to happen *outside* an active backoff, because a
+    // participant in backoff must not fetch at all — including on forceRefresh.
+    // Expiring the window between attempts is what a real sequence of failures
+    // separated by minutes looks like.
+    const expireBackoff = (): void => {
+      const entry = readEntryFile();
+      entry.backoff.retryAfterUntil = Date.now() - 1;
+      entry.timestamp = Date.now() - 25 * 3600_000; // past the 24h cap too
+      fs.writeFileSync(usageCachePath(), JSON.stringify(entry), { mode: 0o600 });
+      fs.chmodSync(usageCachePath(), 0o600);
+    };
+
     await getUsage({ fetcher: makeFetcher({ data: goodResponse }, calls) });
-    // First 429 → counter = 1, lastGoodData captured.
+    // First 429 → counter = 1, lastGood captured.
     await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: null, error: 'rate-limited' }, calls) });
-    // Intervening 500 — must NOT wipe counter/lastGoodData.
+    assert.equal(readEntryFile().backoff.rateLimitedCount, 1);
+
+    expireBackoff();
+    // Intervening 500 — must NOT wipe counter or lastGood.
     await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: null, error: 'http-500' }, calls) });
-    // Second 429 — backoff counter should now be 2 (escalated, not reset to 1).
+
+    expireBackoff();
+    // Second 429 — the counter escalates rather than restarting.
     await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: null, error: 'rate-limited' }, calls) });
 
     const entry = readEntryFile();
     assert.equal(entry.backoff.rateLimitedCount, 2, 'counter must escalate across the 500');
     assert.ok(entry.lastGood, 'lastGood must survive the 500');
     assert.equal(entry.lastGood?.buckets.fiveHour?.utilization, 25);
+  });
+
+  test('an active backoff blocks forceRefresh too', async () => {
+    const calls = { count: 0 };
+    await getUsage({ fetcher: makeFetcher({ data: goodResponse }, calls) });
+    await getUsage({
+      forceRefresh: true,
+      fetcher: makeFetcher({ data: null, error: 'rate-limited', retryAfterSec: 600 }, calls),
+    });
+    const after429 = calls.count;
+
+    // The backoff check used to live only inside the cache read, which
+    // forceRefresh skips — so a caller asking for a refresh fetched straight
+    // through it and escalated the counter for everyone.
+    const countBefore = readEntryFile().backoff.rateLimitedCount;
+    const result = await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: goodResponse }, calls) });
+
+    assert.equal(calls.count, after429, 'no request may be made inside a backoff');
+    assert.equal(result.source, 'backoff');
+    assert.equal(result.data?.fiveHour, 25, 'and last-good is still shown');
+    assert.equal(readEntryFile().backoff.rateLimitedCount, countBefore, 'nor may the counter move');
+  });
+
+  test('a non-429 failure keeps showing the last good numbers', async () => {
+    const calls = { count: 0 };
+    await getUsage({ fetcher: makeFetcher({ data: goodResponse }, calls) });
+
+    const result = await getUsage({
+      forceRefresh: true,
+      fetcher: makeFetcher({ data: null, error: 'http-500' }, calls),
+    });
+
+    // Blanking the display over one 500, with a fresh reading on disk, throws
+    // away information we still hold. §2 says lastGood exists for this.
+    assert.equal(result.data?.fiveHour, 25);
+    assert.equal(result.data?.apiError, 'http-500');
+    assert.equal(result.data?.apiUnavailable, true);
   });
 
   // ── Retry-After upper bound ───────────────────────────────────────────────

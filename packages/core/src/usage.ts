@@ -2,10 +2,12 @@ import type { UsageData, UsageResult } from './types.js';
 import { readCredentials, getPlanName } from './credentials.js';
 import { clamp, parseDate, parseExtraUsage, jitteredBackoff } from './parse.js';
 import {
+  backoffUntil,
   bumpTimestamp,
   migrateLegacyCache,
   priorBuckets,
   readCache,
+  readEntry,
   readEntryStatus,
   toReading,
   toUsageData,
@@ -109,6 +111,31 @@ export async function getUsage(opts?: GetUsageOpts): Promise<UsageResult> {
 
   const none: UsageResult = { data: null, isStale: false, source: 'none' };
 
+  /*
+   * A 429 backoff binds `forceRefresh` too.
+   *
+   * The backoff check lived only inside `readCache`, which `forceRefresh`
+   * skips — so a caller asking for a refresh fetched straight through an
+   * active backoff and drove `rateLimitedCount` up another doubling for every
+   * participant on the machine. §5 says a participant in backoff never
+   * fetches, with no exception for who is asking. `--background` is reachable
+   * by anything on the machine, so this cannot rely on callers being careful.
+   */
+  if (opts?.forceRefresh) {
+    const entry = readEntry();
+    if (
+      entry !== null &&
+      entry.reading?.error === 'rate-limited' &&
+      entry.backoff.rateLimitedCount > 0 &&
+      now < backoffUntil(entry)
+    ) {
+      const display = entry.lastGood
+        ? { ...toUsageData(entry.lastGood), apiError: 'rate-limited' as const }
+        : null;
+      return { data: display, isStale: false, source: 'backoff' };
+    }
+  }
+
   // A newer participant owns this file (§7). It is keeping the reading current
   // and this build cannot store what it would fetch, so stand down rather than
   // spend a request and then overwrite a file we do not understand. Recovering
@@ -144,7 +171,27 @@ export async function getUsage(opts?: GetUsageOpts): Promise<UsageResult> {
 
   let result;
   try {
-    result = await (opts?.fetcher ?? fetchApi)(creds.accessToken);
+    /*
+     * A synchronous throw out of the transport is a failed fetch, not an
+     * exception for the caller to deal with.
+     *
+     * `https.request` throws ERR_INVALID_CHAR on a token carrying a control
+     * character, and that rejection used to propagate out of getUsage. The
+     * statusline's own catch then wrote to stderr, leaving stdout — which *is*
+     * the statusline — empty: no model, no git, no quota, no error. And because
+     * the entry had already been bumped, every peer stood down for two minutes
+     * over a fetch that never happened. Recording it as a network failure gets
+     * the failure TTL, the last-good display, and a legible ⚠ instead.
+     */
+    try {
+      result = await (opts?.fetcher ?? fetchApi)(creds.accessToken);
+    } catch {
+      return {
+        data: writeFailure(now, planName, 'network', undefined),
+        isStale: false,
+        source: 'fetch',
+      };
+    }
 
     if (!result.data) {
       return { data: writeFailure(now, planName, result.error, result.retryAfterSec), isStale: false, source: 'fetch' };
@@ -229,12 +276,14 @@ function writeFailure(
     apiError: error,
   };
 
-  let lastGood: UsageData | null = null;
+  // Read last-good before the update rather than inside the callback. The
+  // callback does not run when updateEntry declines or fails to write, and the
+  // assignment-inside-a-callback pattern also forced a cast that switched off
+  // type checking on the return value below.
+  const priorEntry = readEntry();
+  const lastGood: UsageData | null = priorEntry?.lastGood ? toUsageData(priorEntry.lastGood) : null;
 
-  // `updateEntry` returns null when it refused to write — see §7. The failure
-  // is still worth returning to the caller; it just does not get recorded.
   updateEntry(now, (entry) => {
-    lastGood = entry.lastGood ? toUsageData(entry.lastGood) : null;
     entry.timestamp = now;
     entry.reading = toReading(failure, now, entry.reading?.buckets ?? entry.lastGood?.buckets);
     if (isRateLimit) {
@@ -249,8 +298,18 @@ function writeFailure(
     }
   });
 
-  if (isRateLimit && lastGood) {
-    return { ...(lastGood as UsageData), apiError: 'rate-limited' };
+  /*
+   * Show the numbers we have, whatever kind of failure this was.
+   *
+   * Last-good used to be substituted only for a 429, so a single HTTP 500 or
+   * one timeout blanked the whole quota display for the failure TTL even with a
+   * twenty-second-old reading on disk. §2 says last-good exists precisely so a
+   * participant can keep showing real numbers during an outage instead of
+   * blanking, and the dashboard already honoured that; the statusline path was
+   * the odd one out.
+   */
+  if (lastGood) {
+    return { ...lastGood, apiError: error, apiUnavailable: true };
   }
   return failure;
 }

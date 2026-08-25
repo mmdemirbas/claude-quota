@@ -3,7 +3,6 @@ import { readStdin } from './stdin.js';
 import {
   getUsage,
   getCreditGrant,
-  bumpTimestamp,
   ensureProfileCached,
   isFetchLockHeld,
   writeFileSecure,
@@ -69,20 +68,23 @@ async function main(): Promise<void> {
     ]);
 
     // Merge the credit grant into extra usage — only meaningful when extras
-    // are actually enabled; the disabled variant is just a flag.
-    if (usage.data?.extraUsage?.enabled && creditGrant !== null) {
-      usage.data.extraUsage = { ...usage.data.extraUsage, creditGrant };
+    // are actually enabled; the disabled variant is just a flag. `known` is
+    // what matters: an unknown balance must not be rendered as "no balance".
+    if (usage.data?.extraUsage?.enabled && creditGrant.known && creditGrant.value !== null) {
+      usage.data.extraUsage = { ...usage.data.extraUsage, creditGrant: creditGrant.value };
     }
 
     if (usage.isStale && !isFetchLockHeld()) {
       // A spawn is only useful when no fetch is in flight: a child that loses
       // the lock exits without fetching, so the process cost buys nothing.
       //
-      // Bump before spawning so a third instance landing between here and the
-      // child's own bump sees a fresh-looking entry and skips its own
-      // refresh. The child bumps again inside getUsage; a double bump is one
-      // small file write.
-      bumpTimestamp(Date.now());
+      // This deliberately does not bump the entry first. Bumping here is a
+      // read-modify-write performed *without* the fetch lock, and the check
+      // above is a TOCTOU: a peer can acquire, fetch and write in the window,
+      // and the bump then replaces that fresh reading with the older one under
+      // a new timestamp — protected, for the next two minutes, by a TTL it did
+      // not earn. Suppressing a few redundant spawns is not worth regressing
+      // the cache; the child bumps properly, under the lock.
       spawnBackgroundRefresh(scriptPath);
     }
 
@@ -92,7 +94,10 @@ async function main(): Promise<void> {
     // Republish the dashboard's derived data + shell so a browser reload shows
     // what this render showed.
     writeDashboardData(usage.data);
-    writeDashboardCreditGrant(creditGrant);
+    // Only republish a balance we actually learned. Writing an unknown as null
+    // blanked a real balance on the dashboard whenever a second window happened
+    // to hold the credit-grant lock.
+    if (creditGrant.known) writeDashboardCreditGrant(creditGrant.value);
     ensureDashboardHtml();
   } catch (error) {
     // stdout IS the statusline — error text here renders literally in Claude
@@ -114,7 +119,7 @@ async function background(): Promise<void> {
   const usage = await getUsage({ forceRefresh: true });
   const creditGrant = await getCreditGrant();
   writeDashboardData(usage.data);
-  writeDashboardCreditGrant(creditGrant);
+  if (creditGrant.known) writeDashboardCreditGrant(creditGrant.value);
 }
 
 // Run when executed directly

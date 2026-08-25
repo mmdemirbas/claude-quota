@@ -287,9 +287,23 @@ describe('usage cache protocol v1', { skip: !isPosix }, () => {
     assert.equal(f.calls(), 1);
   });
 
-  test('§4 a fetch that throws still releases the lock', async () => {
-    await assert.rejects(getUsage({ fetcher: async () => { throw new Error('boom'); } }));
-    assert.ok(!fs.existsSync(path.join(usageDir(), '.fetch.lock')));
+  test('§4 a fetch that throws is recorded as a failure, and the lock is released', async () => {
+    // A synchronous throw out of the transport — https.request does this for a
+    // token carrying a control character — used to propagate out of getUsage.
+    // The statusline's own catch then wrote to stderr, leaving stdout, which
+    // *is* the statusline, entirely blank: no model, no git, no quota, no
+    // error. And the entry stayed bumped, standing peers down for two minutes
+    // over a fetch that never happened.
+    const result = await getUsage({ fetcher: async () => { throw new Error('boom'); } });
+
+    assert.equal(result.source, 'fetch');
+    assert.equal(result.data?.apiError, 'network', 'a throw is a failed fetch, not an escape');
+    assert.ok(!fs.existsSync(path.join(usageDir(), '.fetch.lock')), 'and the lock is released');
+
+    // A failure entry has the short TTL, so the next attempt is not blocked.
+    const f = countingFetcher();
+    await getUsage({ forceRefresh: true, fetcher: f.fn });
+    assert.equal(f.calls(), 1);
   });
 
   // ── §5 Freshness ─────────────────────────────────────────────────────────

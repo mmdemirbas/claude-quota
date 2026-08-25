@@ -12,7 +12,7 @@ import {
   CREDIT_GRANT_NULL_TTL_MS,
 } from './constants.js';
 import { ensureUsageDir } from './cache.js';
-import { fetchJson } from './api.js';
+import { fetchJson, fetchJsonOutcome } from './api.js';
 import { acquireFetchLock, creditGrantLockPath, profileLockPath } from './lock.js';
 
 /**
@@ -49,9 +49,18 @@ export function readProfileCache(now: number): ProfileData | null {
   const cache = readJson<ProfileCacheFile>(profileCachePath(), 'profile');
   if (cache == null) return null;
   if (now - cache.timestamp >= PROFILE_CACHE_TTL_MS || !cache.orgUUID) return null;
-  // A cache written before the tier fields existed cannot answer the question
-  // it is consulted for; treat it as a miss and re-fetch.
-  if (!cache.rateLimitTier) return null;
+  /*
+   * `v` marks a cache written by a build that stores the tier fields.
+   *
+   * The check used to be "no rateLimitTier means too old to use", which is
+   * wrong for an organisation whose profile response simply omits
+   * `rate_limit_tier` — the field is optional. Such a cache was written and
+   * then rejected by its own reader on every read, so `ensureProfileCached`
+   * missed forever and every statusline render issued a fresh profile request,
+   * awaited on the critical path. Worse during a rate limit: that request 429s,
+   * caches nothing, and repeats once per render with no backoff at all.
+   */
+  if (cache.v === undefined && !cache.rateLimitTier) return null;
   return {
     orgUUID: cache.orgUUID,
     rateLimitTier: cache.rateLimitTier,
@@ -61,6 +70,7 @@ export function readProfileCache(now: number): ProfileData | null {
 
 function writeProfileCache(data: ProfileData, timestamp: number): void {
   const cache: ProfileCacheFile = {
+    v: 2,
     orgUUID: data.orgUUID,
     rateLimitTier: data.rateLimitTier,
     organizationType: data.organizationType,
@@ -124,22 +134,36 @@ export async function ensureProfileCached(): Promise<void> {
   }
 }
 
-/** Prepaid credit grant in dollars, or null when there is none or it is unknown. */
-export async function getCreditGrant(): Promise<number | null> {
+/**
+ * The prepaid credit grant.
+ *
+ * `known: false` means "could not find out", which is not the same as "there is
+ * no grant" and must not be rendered as one. Collapsing the two blanked a real
+ * balance on the dashboard whenever a second window happened to hold the lock,
+ * and cached a dropped connection as "no grant" for a day.
+ */
+export interface CreditGrantState {
+  known: boolean;
+  value: number | null;
+}
+
+const UNKNOWN: CreditGrantState = { known: false, value: null };
+
+export async function getCreditGrant(): Promise<CreditGrantState> {
   const now = Date.now();
 
   const cached = readCreditGrantCache(now);
-  if (cached) return cached.value;
+  if (cached) return { known: true, value: cached.value };
 
   const lock = acquireFetchLock(now, creditGrantLockPath());
   if (!lock) {
     const recheck = readCreditGrantCache(now);
-    return recheck ? recheck.value : null;
+    return recheck ? { known: true, value: recheck.value } : UNKNOWN;
   }
 
   try {
     const creds = readCredentials(now);
-    if (!creds) return null;
+    if (!creds) return UNKNOWN;
 
     // Cold profile defers to ensureProfileCached so the *profile* lock
     // serialises that fetch. Without the deferral two participants holding
@@ -149,13 +173,22 @@ export async function getCreditGrant(): Promise<number | null> {
     if (!profileData) {
       await ensureProfileCached();
       profileData = readProfileCache(now);
-      if (!profileData) return null;
+      if (!profileData) return UNKNOWN;
     }
 
-    const grant = await fetchJson<CreditGrantApiResponse>(
+    /*
+     * `fetchJson` returns null for a 429, a 500, a timeout and a parse failure
+     * alike, so it cannot distinguish "this account has no grant" from "the
+     * server did not answer". Caching the second as the first held a real
+     * balance at zero for a day — most likely triggered by the very rate limit
+     * that makes someone look at their quota. Ask for the outcome instead.
+     */
+    const outcome = await fetchJsonOutcome<CreditGrantApiResponse>(
       `/api/oauth/organizations/${encodeURIComponent(profileData.orgUUID)}/overage_credit_grant`,
       creds.accessToken,
     );
+    if (!outcome.ok) return UNKNOWN;
+    const grant = outcome.data;
 
     if (process.env.CLAUDE_USAGE_DEBUG === '1' || process.env.CLAUDE_QUOTA_DEBUG === '1') {
       try {
@@ -168,12 +201,12 @@ export async function getCreditGrant(): Promise<number | null> {
 
     if (!grant || !grant.granted || grant.amount_minor_units == null) {
       writeCreditGrantCache(null, now);
-      return null;
+      return { known: true, value: null };
     }
 
     const dollars = grant.amount_minor_units / 100;
     writeCreditGrantCache(dollars, now);
-    return dollars;
+    return { known: true, value: dollars };
   } finally {
     lock.release();
   }
