@@ -263,12 +263,21 @@ export function readCache(
   const age = Math.abs(now - entry.timestamp);
   if (age >= ttl) return null;
 
-  // Any failure, not only a 429, keeps showing the last real numbers. See the
-  // note in usage.ts writeFailure: blanking a quota display over one HTTP 500
-  // throws away information we still hold.
+  /*
+   * Any failure, not only a 429, keeps showing the last real numbers — and
+   * `apiUnavailable` is deliberately NOT set when it does.
+   *
+   * The two flags mean different things and conflating them is a display bug:
+   * `apiUnavailable` says "there are no numbers to show", which renderers use
+   * to draw a warning glyph *instead of* the bars, while `apiError` says "the
+   * most recent attempt failed". A reading substituted from lastGood has real
+   * numbers, so only the second is true of it. Setting both replaced a full
+   * quota display with a bare ⚠ — including for the 429 case that had always
+   * worked.
+   */
   const display =
     entry.reading.error !== null && entry.lastGood
-      ? { ...toUsageData(entry.lastGood), apiError: entry.reading.error, apiUnavailable: true }
+      ? { ...toUsageData(entry.lastGood), apiError: entry.reading.error }
       : toUsageData(entry.reading);
 
   /*

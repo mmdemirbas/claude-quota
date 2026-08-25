@@ -214,7 +214,9 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
     // away information we still hold. §2 says lastGood exists for this.
     assert.equal(result.data?.fiveHour, 25);
     assert.equal(result.data?.apiError, 'http-500');
-    assert.equal(result.data?.apiUnavailable, true);
+    // ...and NOT apiUnavailable, which renderers read as "nothing to show, draw
+    // a warning instead of the bars". Setting both is what hid the numbers.
+    assert.equal(result.data?.apiUnavailable, undefined);
   });
 
   // ── Retry-After upper bound ───────────────────────────────────────────────

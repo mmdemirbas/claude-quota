@@ -993,3 +993,48 @@ describe('render resilience', () => {
     assert.ok(lines.length >= 1, 'expected at least line 1');
   });
 });
+
+/**
+ * The two failure flags mean different things, and the statusline is where
+ * confusing them shows up.
+ *
+ * `apiUnavailable` says "there are no numbers" and makes the renderer draw a
+ * warning glyph *instead of* the bars. `apiError` says "the most recent attempt
+ * failed". A reading substituted from last-good has real numbers, so only the
+ * second is true of it — and setting both replaced a full quota display with a
+ * bare ⚠, including for the rate-limited case that had always worked.
+ *
+ * Every unit test in the core package passed while this was broken, because
+ * none of them render. That is the gap this closes.
+ */
+describe('a failure that still carries numbers', () => {
+  function drawn(usage: UsageData): string {
+    const lines: string[] = [];
+    const original = console.log;
+    console.log = (s: string) => { lines.push(s); };
+    try {
+      render({ stdin: baseStdin, usage, git: null, columns: 120, rows: 3 } as RenderInput);
+    } finally {
+      console.log = original;
+    }
+    return lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '').replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, '');
+  }
+
+  for (const error of ['rate-limited', 'http-500', 'timeout', 'network'] as const) {
+    test(`still draws the bars when the error is ${error}`, () => {
+      const out = drawn({ ...baseUsage, apiError: error });
+      assert.match(out, /36%/, 'the five-hour number must survive a failed refresh');
+      assert.match(out, /18%/, 'and so must the seven-day one');
+    });
+  }
+
+  test('draws the warning only when there is genuinely nothing to show', () => {
+    const out = drawn({
+      ...baseUsage,
+      fiveHour: null, sevenDay: null, sonnet: null,
+      apiUnavailable: true, apiError: 'http-500',
+    });
+    assert.doesNotMatch(out, /36%/);
+    assert.match(out, /⚠/);
+  });
+});

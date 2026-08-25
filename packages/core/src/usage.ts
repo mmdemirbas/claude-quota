@@ -308,8 +308,11 @@ function writeFailure(
    * blanking, and the dashboard already honoured that; the statusline path was
    * the odd one out.
    */
+  // Only `apiError`: these are real numbers, so `apiUnavailable` — which
+  // renderers read as "nothing to show, draw a warning instead" — is false of
+  // them. See the note in cache.ts readCache.
   if (lastGood) {
-    return { ...lastGood, apiError: error, apiUnavailable: true };
+    return { ...lastGood, apiError: error };
   }
   return failure;
 }
