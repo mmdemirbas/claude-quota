@@ -85,6 +85,40 @@ describe('cross-process coordination', { skip: !isPosix }, () => {
     assert.equal(await run(['lock', lockPath]), 'WON', 'a dead holder must not wedge the cache');
   });
 
+  test('§4 racing a STALE lock still yields exactly one holder, over many trials', async () => {
+    // The reclaim path is a different algorithm from the O_EXCL create, and it
+    // was wrong: stat-then-unlink-then-create let two processes both decide a
+    // lock was stale, the second unlink delete the first's brand-new lock, and
+    // both creates succeed. Measured at 1 double-holder in 20 trials before the
+    // fix, so a single trial proves nothing — this runs enough of them to fail
+    // reliably on a regression.
+    const TRIALS = 25;
+    const RACERS = 8;
+    const winners: number[] = [];
+
+    for (let t = 0; t < TRIALS; t++) {
+      const lockPath = path.join(dir, `reclaim-${t}.lock`);
+      // A lock left behind by a process that died mid-fetch.
+      fs.writeFileSync(lockPath, `99999.dead${t}`, { mode: 0o600 });
+      const ancient = (Date.now() - 60_000) / 1000;
+      fs.utimesSync(lockPath, ancient, ancient);
+
+      // A common start instant, so the racers actually overlap instead of
+      // queueing behind each other's process spawn.
+      const startAt = Date.now() + 900;
+      const results = await Promise.all(
+        Array.from({ length: RACERS }, () => run(['reclaim', lockPath, String(startAt)])),
+      );
+      winners.push(results.filter((r) => r === 'WON').length);
+    }
+
+    const doubles = winners.filter((w) => w !== 1);
+    assert.deepEqual(
+      doubles, [],
+      `every trial must have exactly one winner; got ${winners.join(',')}`,
+    );
+  });
+
   test('§3 concurrent appends from six processes never interleave a line', async () => {
     const logPath = path.join(dir, 'readings.jsonl');
     fs.writeFileSync(logPath, '', { mode: 0o600 });

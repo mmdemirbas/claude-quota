@@ -16,7 +16,20 @@ import { acquireFetchLock } from '../../src/lock.js';
 
 const [, , mode, target, arg] = process.argv;
 
-if (mode === 'lock') {
+if (mode === 'reclaim') {
+  // Race a *stale* lock rather than an absent one. O_EXCL alone guarantees one
+  // winner when the file does not exist; the reclaim path is a separate
+  // algorithm and needs its own evidence.
+  const start = Number(arg);
+  while (Date.now() < start) { /* spin to a common start instant */ }
+  const lock = acquireFetchLock(Date.now(), target);
+  process.stdout.write(lock === null ? 'LOST\n' : 'WON\n');
+  if (lock !== null) {
+    setTimeout(() => { lock.release(); process.exit(0); }, 400);
+  } else {
+    process.exit(0);
+  }
+} else if (mode === 'lock') {
   const lock = acquireFetchLock(Date.now(), target);
   if (lock === null) {
     process.stdout.write('LOST\n');

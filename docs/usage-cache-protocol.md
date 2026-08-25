@@ -186,10 +186,39 @@ Mutual exclusion for the upstream request. This is the part that actually
 prevents the redundant calls.
 
 **Acquire.** `open(O_CREAT | O_EXCL | O_WRONLY, 0600)`. On success, write a
-per-acquisition token — `<pid>.<16 hex chars of CSPRNG>` — and close. On
-`EEXIST`, `lstat` the lock: if it is not a symlink and its mtime is older than
-**20 000 ms**, unlink it and retry the create exactly once. If that create also
-fails, the caller did not get the lock.
+per-acquisition token — `<pid>.<16 hex chars of CSPRNG>` — and close. If the
+token cannot be written, or the file cannot be closed, unlink the lock and
+report failure: a lock whose contents are not the token can never be released
+by its owner, and would block every participant for the full staleness window.
+
+On `EEXIST`, `lstat` the lock. A symlink is neither followed nor honoured —
+remove it, warn, and retry. If the mtime is newer than **20 000 ms**, a live
+participant holds it and the caller did not get the lock. Older than that, the
+holder is presumed dead and the lock may be **reclaimed**, as follows.
+
+**Reclaim.** Reclaiming is a read-modify-write across processes — decide the
+lock is stale, remove it, create a new one — and POSIX offers no way to do that
+atomically. Both obvious implementations have a measured race:
+
+| Attempt | How it fails | Measured |
+|---|---|---|
+| stat → unlink → create | Two participants both see the stale lock; the second unlink deletes the first's *brand-new* lock | 1 double-holder in 20 trials |
+| rename aside → create | A third participant, holding a stat from before that rename, renames the *winner's fresh* lock aside and puts it back; a create lands in the gap | 1 double-holder in 15 trials |
+
+So reclaim MUST be serialised rather than made clever. A participant:
+
+1. Takes a second lock at `<lockpath>.reclaim`, with `O_EXCL` only. Failure to
+   take it means yield — unless it is itself older than 20 000 ms, in which case
+   its holder is certainly gone (the sequence below takes microseconds) and it
+   may be removed.
+2. **Re-checks the main lock's mtime under that lock.** Anything acquired since
+   the first stat was acquired legitimately and MUST be left alone. This is the
+   step that makes the scheme safe.
+3. Unlinks the main lock and creates it with `O_EXCL`. If that create fails, a
+   plain acquire won the gap; yield to it.
+4. Removes the reclaim lock.
+
+Every path ends with at most one holder.
 
 **Release.** Read the file back. Unlink **only if** the contents equal the token
 written at acquire.

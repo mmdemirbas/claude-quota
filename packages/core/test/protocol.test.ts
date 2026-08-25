@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { getUsage, readCachedUsage, readReadings, type FetchApiFn } from '../src/index.js';
 import { readingsPath, usageCachePath, usageDir } from '../src/paths.js';
+import { bumpTimestamp } from '../src/cache.js';
 import { appendReading, lastReadingAt } from '../src/readings.js';
 import {
   CACHE_SOFT_TTL_MS,
@@ -551,6 +552,89 @@ describe('usage cache protocol v1', { skip: !isPosix }, () => {
     fs.appendFileSync(readingsPath(), '{"fetchedAt":99999999,"buck');
 
     assert.equal(lastReadingAt(), now, 'a half-written record must not be taken as the newest');
+  });
+
+  // ── fetchedAt means "when it was measured" ───────────────────────────────
+
+  test('a served reading carries the instant it was measured, not the instant the cache was touched', async () => {
+    const f = countingFetcher();
+    await getUsage({ fetcher: f.fn });
+    const measuredAt = entry().reading?.fetchedAt;
+    assert.ok(measuredAt);
+
+    // A bump marks the entry fresh without a new measurement. Anything served
+    // afterwards is still the *old* measurement and must say so.
+    const later = Date.now() + 5_000;
+    bumpTimestamp(later);
+    assert.equal(entry().timestamp, later, 'the bump moved the entry timestamp');
+
+    const served = readCachedUsage();
+    assert.equal(
+      served.data?.fetchedAt,
+      measuredAt,
+      'fetchedAt must be the measurement time, not the bump time',
+    );
+  });
+
+  test('a reading served during a peer\'s in-flight fetch does not collide with the reading that lands', async () => {
+    // The bug this pins. The fetcher stamps its reading with the same instant
+    // it used to bump the entry beforehand. A reader arriving mid-flight was
+    // handed the *previous* values wearing the *incoming* reading's timestamp.
+    // Downstream, where fetchedAt is a primary key, the real measurement then
+    // lost a primary-key conflict against the stale copy of it.
+    const first = countingFetcher();
+    await getUsage({ fetcher: first.fn });
+    const firstReading = entry().reading;
+    assert.ok(firstReading);
+
+    // Force the next call past the hard TTL so it fetches.
+    const e = entry();
+    e.timestamp = Date.now() - CACHE_TTL_MS - 1;
+    writeEntry(e);
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const inFlight = getUsage({ fetcher: countingFetcher(gate).fn });
+
+    // Mid-flight read: old values, and they must carry the old measurement time.
+    const during = readCachedUsage();
+    assert.equal(during.data?.fiveHour, 25);
+    assert.equal(
+      during.data?.fetchedAt,
+      firstReading.fetchedAt,
+      'a mid-flight read must not borrow the incoming reading\'s timestamp',
+    );
+
+    release();
+    await inFlight;
+
+    const landed = entry().reading;
+    assert.ok(landed);
+    assert.notEqual(
+      landed.fetchedAt,
+      during.data?.fetchedAt,
+      'the reading that landed must be distinguishable from the one served during the flight',
+    );
+  });
+
+  test('a rate-limited display carries the last good measurement\'s time, not the failure\'s', async () => {
+    await getUsage({ fetcher: countingFetcher().fn });
+    const goodAt = entry().reading?.fetchedAt;
+    assert.ok(goodAt);
+
+    await getUsage({
+      forceRefresh: true,
+      fetcher: async () => ({ data: null, error: 'rate-limited' as const, retryAfterSec: 60 }),
+    });
+
+    const held = readCachedUsage();
+    assert.equal(held.data?.apiError, 'rate-limited');
+    assert.equal(held.data?.fiveHour, 25, 'real numbers are still shown');
+    assert.equal(
+      held.data?.fetchedAt,
+      goodAt,
+      'and they are stamped with when they were measured, not when the 429 arrived',
+    );
   });
 
   // ── §6 Credentials ───────────────────────────────────────────────────────

@@ -235,11 +235,12 @@ export function readCache(
 
   if (entry.reading.error === 'rate-limited' && entry.backoff.rateLimitedCount > 0) {
     if (now < backoffUntil(entry)) {
-      // In backoff: show real numbers, flagged, and do not fetch.
+      // In backoff: show real numbers, flagged, and do not fetch. They keep the
+      // instant they were measured — see the note below.
       const display = entry.lastGood
         ? { ...toUsageData(entry.lastGood), apiError: 'rate-limited' as const }
         : toUsageData(entry.reading);
-      return { data: { ...display, fetchedAt: entry.timestamp }, isStale: false, source: 'backoff' };
+      return { data: display, isStale: false, source: 'backoff' };
     }
     return null; // backoff expired — fetch regardless of the failure TTL
   }
@@ -253,8 +254,27 @@ export function readCache(
       ? { ...toUsageData(entry.lastGood), apiError: 'rate-limited' as const }
       : toUsageData(entry.reading);
 
+  /*
+   * `fetchedAt` is the instant the reading was *measured*, and never
+   * `entry.timestamp`.
+   *
+   * The two are different facts. `entry.timestamp` is cache bookkeeping — it
+   * moves when a participant bumps the entry before a request, without any new
+   * measurement — while `fetchedAt` is the only thing that says how old the
+   * numbers on screen actually are.
+   *
+   * Stamping the display with the entry timestamp broke both. It told the user
+   * a reading was current when it was minutes old and merely re-confirmed. And
+   * because the fetcher derives its bump and its reading's `fetchedAt` from one
+   * `now`, a reader arriving mid-flight was handed the *previous* values
+   * wearing the *incoming* reading's timestamp — so downstream, where
+   * `fetchedAt` is a primary key, the real measurement lost a primary-key
+   * conflict against a stale copy of itself and was dropped. The same mechanism
+   * stamped last-good numbers with the time of the 429 that failed to replace
+   * them, diluting any rate computed from the history.
+   */
   return {
-    data: { ...display, fetchedAt: entry.timestamp },
+    data: display,
     isStale: entry.reading.error === null && age >= CACHE_SOFT_TTL_MS,
     source: 'cache',
   };

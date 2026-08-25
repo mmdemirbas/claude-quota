@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { creditGrantLockPath, fetchLockPath, profileLockPath, usageDir } from './paths.js';
+import { warn } from './log.js';
 import { FETCH_COORDINATION_MS } from './constants.js';
 
 // ── The fetch lock ──────────────────────────────────────────────────────────
@@ -37,6 +38,105 @@ export function isFetchLockHeld(now: number = Date.now(), lockPathOverride?: str
 }
 
 /**
+ * Take over a lock whose holder is gone, without taking one whose holder is not.
+ *
+ * Reclaiming is a read-modify-write on a file — decide it is stale, remove it,
+ * create a new one — and POSIX gives no way to do that atomically. Every
+ * variant that tries to fake it with `unlink` or `rename` has a window:
+ *
+ *   - stat, unlink, create: two participants both see the stale lock, and the
+ *     second unlink deletes the *first's brand-new* lock. Both creates succeed.
+ *     Measured at 1 double-holder in 20 trials.
+ *   - rename the stale lock aside, then create: better, because exactly one
+ *     participant can rename a given path. But a third participant, still
+ *     holding a stat from before that rename, renames the *winner's fresh* lock
+ *     aside next; it detects the mistake and puts it back, and another create
+ *     lands in that gap. Measured at 1 double-holder in 15 trials.
+ *
+ * The window cannot be closed by being cleverer about the swap, so reclaim is
+ * serialised instead: a participant must hold a second, dedicated lock before
+ * it may remove the first. That one is only ever taken with `O_EXCL` and held
+ * for microseconds, so it needs no reclaim algorithm of its own.
+ *
+ * Under that lock the staleness is re-checked, which is what makes it safe: if
+ * someone acquired legitimately in the meantime, their lock is fresh and we
+ * leave it alone. And if a plain `O_EXCL` create wins the gap between our
+ * unlink and our create, our create fails and we yield to them. Every path ends
+ * with at most one holder.
+ */
+function reclaimIfStale(lockPath: string, now: number): number | null {
+  let st: fs.Stats;
+  try {
+    st = fs.lstatSync(lockPath);
+  } catch {
+    // Released between our create and this stat. Yielding one round is
+    // harmless — the caller serves the cache and the next tick acquires —
+    // and trying to create here is precisely what let a reclaimer in
+    // mid-steal produce a second holder.
+    return null;
+  }
+
+  if (st.isSymbolicLink()) {
+    // Nothing legitimate puts a symlink here: the directory is 0700 and ours.
+    // Leaving it wedges fetching permanently with no diagnostic, because
+    // isFetchLockHeld reports a symlink as *not* held, so callers keep trying
+    // and keep losing. Remove it — unlink does not follow the link — and say so.
+    warn('fetch lock was a symlink; removing it', { lockPath });
+    try { fs.unlinkSync(lockPath); } catch { /* someone got there first */ }
+    return tryCreateLock(lockPath);
+  }
+
+  if (now - st.mtimeMs < FETCH_COORDINATION_MS) return null; // a live peer holds it
+
+  const reclaimPath = `${lockPath}.reclaim`;
+  let reclaimFd = tryCreateLock(reclaimPath);
+  if (reclaimFd === null) {
+    // Either a peer is reclaiming right now, or a reclaimer died holding this.
+    // The guarded sequence takes microseconds, so a reclaim lock older than the
+    // coordination window is certainly abandoned.
+    try {
+      const rst = fs.lstatSync(reclaimPath);
+      if (!rst.isSymbolicLink() && Date.now() - rst.mtimeMs >= FETCH_COORDINATION_MS) {
+        try { fs.unlinkSync(reclaimPath); } catch { /* ignore */ }
+        reclaimFd = tryCreateLock(reclaimPath);
+      }
+    } catch { /* vanished — a peer finished; yield this round */ }
+    if (reclaimFd === null) return null;
+  }
+  try { fs.closeSync(reclaimFd); } catch { /* ignore */ }
+
+  try {
+    // Re-check under the reclaim lock. Anything that acquired since our first
+    // stat did so legitimately and must not be disturbed.
+    let current: fs.Stats;
+    try {
+      current = fs.lstatSync(lockPath);
+    } catch {
+      return tryCreateLock(lockPath); // gone; a plain create is now the whole story
+    }
+    if (Date.now() - current.mtimeMs < FETCH_COORDINATION_MS) return null;
+
+    try { fs.unlinkSync(lockPath); } catch { /* a peer beat us to it */ }
+    return tryCreateLock(lockPath);
+  } finally {
+    try { fs.unlinkSync(reclaimPath); } catch { /* ignore */ }
+  }
+}
+
+/** `open(O_CREAT | O_EXCL)`, or null when the path already exists. */
+function tryCreateLock(lockPath: string): number | null {
+  try {
+    return fs.openSync(
+      lockPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
+      0o600,
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Take the fetch lock, or return null because a peer holds it.
  *
  * A caller that gets null MUST NOT fetch. It re-reads the cache — the winner
@@ -66,30 +166,8 @@ export function acquireFetchLock(
     } catch { /* ignore */ }
   }
 
-  const tryCreate = (): number | null => {
-    try {
-      return fs.openSync(
-        lockPath,
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL,
-        0o600,
-      );
-    } catch {
-      return null;
-    }
-  };
-
-  let fd = tryCreate();
-  if (fd === null) {
-    try {
-      const st = fs.lstatSync(lockPath);
-      if (!st.isSymbolicLink() && now - st.mtimeMs >= FETCH_COORDINATION_MS) {
-        // Reclaim. If either step races a winning peer, the second create
-        // fails and we yield to them.
-        try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
-        fd = tryCreate();
-      }
-    } catch { /* lock vanished between failure and stat */ }
-  }
+  let fd = tryCreateLock(lockPath);
+  if (fd === null) fd = reclaimIfStale(lockPath, now);
   if (fd === null) return null;
 
   const token = `${process.pid}.${randomBytes(8).toString('hex')}`;
@@ -97,8 +175,29 @@ export function acquireFetchLock(
   // openSync's mode is masked by umask; force 0600 so an unusual umask cannot
   // leave the lock world-readable.
   try { fs.fchmodSync(fd, 0o600); } catch { /* ignore */ }
-  try { fs.writeSync(fd, token); } catch { /* ignore */ }
-  fs.closeSync(fd);
+
+  /*
+   * The token write is not optional, and neither is the close.
+   *
+   * Swallowing a failed write leaves the lock file present but empty, so
+   * `release` never recognises it as ours and never unlinks it — the lock is
+   * then leaked for the full staleness window, blocking every participant on
+   * the machine for twenty seconds over a disk error. And an unhandled throw
+   * from `closeSync` escaped this function *after* the lock file existed, with
+   * no handle returned to release it: the same leak by another route.
+   *
+   * If we cannot establish ownership, we do not hold the lock. Clean up and say
+   * we lost, which callers already handle — they serve the cache and move on.
+   */
+  try {
+    fs.writeSync(fd, token);
+    fs.closeSync(fd);
+  } catch {
+    try { fs.closeSync(fd); } catch { /* already closed */ }
+    try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+    warn('could not claim the fetch lock; yielding', { lockPath });
+    return null;
+  }
 
   return {
     release: () => {
