@@ -41,6 +41,13 @@ remember.
 | `readings.jsonl` | `0600` | Append-only log of distinct successful readings |
 | `.fetch.lock` | `0600` | Mutual exclusion for the upstream fetch |
 
+The reference implementation keeps two more files in the same directory —
+`profile.json` and `credit-grant.json`, with `.profile.lock` and
+`.credit-grant.lock` beside them. They hold a plan label and a prepaid balance
+rather than a measurement, so they are outside this protocol (§8); they live
+here only so a second participant does not re-fetch them either. Nothing in
+this document depends on them, and an implementation may ignore them.
+
 A participant MUST refuse to read any of these if the file is a symbolic link,
 is not owned by the current uid, or has any group or world permission bit set.
 A refused file is treated as absent. Without this a second local user can plant
