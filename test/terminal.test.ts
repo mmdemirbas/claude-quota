@@ -70,4 +70,49 @@ describe('terminalDims', () => {
     assert.ok(dims.columns < 10_001,
       'columns > 10000 from stdin must not be trusted');
   });
+
+  describe('COLUMNS from the environment', () => {
+    /**
+     * These only bind when no earlier source answers, so stderr must not be a
+     * TTY. It is a pipe under the test runner, which is what makes the env var
+     * the deciding source here.
+     */
+    function withColumns<T>(value: string, fn: () => T): T {
+      const saved = process.env['COLUMNS'];
+      process.env['COLUMNS'] = value;
+      try {
+        return fn();
+      } finally {
+        if (saved === undefined) delete process.env['COLUMNS'];
+        else process.env['COLUMNS'] = saved;
+      }
+    }
+
+    test('a plain integer is used', () => {
+      assert.equal(withColumns('80', () => terminalDims(null).columns), 80);
+    });
+
+    test('surrounding whitespace is tolerated — a shell may leave a newline', () => {
+      assert.equal(withColumns('  90 \n', () => terminalDims(null).columns), 90);
+    });
+
+    test('scientific notation is refused rather than half-read', () => {
+      // parseInt('1e5', 10) stops at the 'e' and returns 1, so the statusline
+      // rendered into a single column: every field truncated away, and no
+      // error anywhere to say why. A value that is not a run of digits is not
+      // a dimension.
+      assert.equal(withColumns('1e5', () => terminalDims(null).columns), 120);
+    });
+
+    test('a number with trailing junk is refused, not silently accepted', () => {
+      assert.equal(withColumns('80abc', () => terminalDims(null).columns), 120);
+    });
+
+    test('hex, words and empty all fall through to the default', () => {
+      for (const v of ['0x50', 'wide', '', '-80', '12.5']) {
+        assert.equal(withColumns(v, () => terminalDims(null).columns), 120,
+          `COLUMNS=${JSON.stringify(v)} must not be read as a width`);
+      }
+    });
+  });
 });

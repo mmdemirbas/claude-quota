@@ -176,6 +176,12 @@ export function resetIn(resetAt: Date | null, now: number): string {
 
   if (hours >= 24) {
     const days = Math.floor(hours / 24);
+    // The bare days form was the one path out of here with no width bound. A
+    // quota window resets within seven days, so a larger number means a
+    // corrupted or misparsed date rather than a long wait — and `2913770d`
+    // pushed every field after it off the line. Say "more than 99 days" in
+    // four columns instead, which is both true and inside the slot.
+    if (days > 99) return '99d+';
     const remH = hours % 24;
     if (remH > 0) {
       const full = `${days}d${remH}h`;
@@ -359,12 +365,28 @@ function fitLine(
   for (const detail of DETAIL_LEVELS) {
     const parts = buildParts(detail).filter((p): p is string => p !== null);
     if (parts.length === 0) return '';
-    const line = parts.join(SEP);
+    const line = dropTrailingPad(parts.join(SEP));
     if (visibleLength(line) <= maxCols) return line;
   }
   // Safety net: hard truncate the compact rendering
   const parts = buildParts('compact').filter((p): p is string => p !== null);
-  return truncate(parts.join(SEP), maxCols);
+  return truncate(dropTrailingPad(parts.join(SEP)), maxCols);
+}
+
+/**
+ * Drop padding that runs off the end of a line.
+ *
+ * Segments pad themselves to their tier width so the columns line up between
+ * rows, which is right for every segment except the last one: there is nothing
+ * to its right to align with. The disabled extra-usage placeholder is nine
+ * columns of content padded to thirty-two, so it ended each line with
+ * twenty-three spaces. They are invisible, but they are not free — the line
+ * measured seventy-seven columns wide when it drew fifty-four, so `fitLine`
+ * dropped to a narrower tier on any terminal between those two widths, hiding
+ * reset times that fit perfectly well.
+ */
+function dropTrailingPad(line: string): string {
+  return line.replace(/ +$/, '');
 }
 
 // ── Segment rendering ──────────────────────────────────────────────────────
@@ -532,19 +554,18 @@ export function formatBalance(creditGrant: number, usedCredits: number): string 
 /**
  * Render the extra (pay-as-you-go) usage segment.
  * Same tier widths as renderQuota; 'reset' slot holds the monthly limit instead.
- * The disabled state pads to the same compact-tier width (9 visible
- * chars: " ○$:" + " " + "  off") so it slots into the existing column
- * grid instead of drifting under the full-tier reset slot.
+ *
+ * The disabled state renders its nine columns and stops. It used to pad out to
+ * the active tier's width for grid alignment, but this segment is last on
+ * every line that carries it, so the padding only ever ran off the end — and
+ * counted against the width budget while doing so. Alignment of the segments
+ * that *do* have neighbours is set by those neighbours' own widths;
+ * `dropTrailingPad` in fitLine removes what overhangs the end.
  */
 function renderExtraUsage(usage: UsageData, now: number, detail: DetailLevel): string | null {
   if (!usage.extraUsage) return null;
   if (!usage.extraUsage.enabled) {
-    // Pad the placeholder to the active tier's width so the segment
-    // aligns with neighbouring quota segments (which all render at
-    // exactly TIER_SEGMENT_WIDTH[detail] visible chars).
-    const placeholder = `${dim(' ○$:')} ${dim(' off')}`;
-    const target = TIER_SEGMENT_WIDTH[detail];
-    return placeholder + ' '.repeat(Math.max(0, target - visibleLength(placeholder)));
+    return `${dim(' ○$:')} ${dim(' off')}`;
   }
 
   const { usedCredits, monthlyLimit, creditGrant } = usage.extraUsage;

@@ -40,6 +40,81 @@ describe('visibleLength', () => {
   });
 });
 
+// ── display columns ───────────────────────────────────────────────────────────
+
+describe('visibleLength counts columns, not code units', () => {
+  /*
+   * The distinction this suite exists for: JavaScript's `.length` counts UTF-16
+   * code units and a terminal draws columns. They disagree in both directions
+   * — CJK is one unit and two columns, a decomposed accent is two units and
+   * one column — and the two mistakes do not cancel. A statusline measured on
+   * the wrong one either wraps onto a line the user did not ask for or leaves
+   * a gap where a field should be.
+   */
+
+  test('a CJK character is two columns wide though it is one code unit', () => {
+    assert.equal('日本語'.length, 3, 'precondition: three code units');
+    assert.equal(visibleLength('日本語'), 6);
+  });
+
+  test('Hangul and fullwidth forms are wide too', () => {
+    assert.equal(visibleLength('한국어'), 6);
+    assert.equal(visibleLength('ＡＢ'), 4);
+  });
+
+  test('an emoji is two columns and two code units — right by coincidence', () => {
+    assert.equal(visibleLength('👍'), 2);
+  });
+
+  test('a combining mark adds no column', () => {
+    const nfd = 'é'; // e + combining acute
+    assert.equal(nfd.length, 2, 'precondition: two code units');
+    assert.equal(visibleLength(nfd), 1);
+  });
+
+  test('a variation selector and a zero-width joiner add no column', () => {
+    assert.equal(visibleLength('‍'), 0);
+    assert.equal(visibleLength('️'), 0);
+  });
+
+  test("the plugin's own glyphs stay exactly one column", () => {
+    /*
+     * The load-bearing case, and the reason ambiguous-width characters are
+     * left out of the wide table. Every one of these is East Asian Width
+     * "Ambiguous": two columns in a CJK locale, one everywhere else. The bars,
+     * separators, pace arrows and window glyphs on screen are built from them,
+     * so treating ambiguous as wide would double the measured width of every
+     * line the plugin draws and collapse it to the compact tier on a terminal
+     * with room to spare.
+     */
+    for (const glyph of ['█', '░', '│', '→', '↘', '↗', '↺', '⟳', '◑', '◔', '◕', '●', '○', '⚠']) {
+      assert.equal(visibleLength(glyph), 1, `${glyph} must measure one column`);
+    }
+  });
+
+  test('truncate cuts on columns, never inside a wide character', () => {
+    // One column left and a two-column character to place: it does not fit,
+    // and writing it anyway is what pushes a line into a wrap.
+    assert.equal(truncate('a日b', 2), 'a');
+    assert.equal(truncate('a日b', 3), 'a日');
+    assert.equal(truncate('日本語', 4), '日本');
+  });
+
+  test('truncate keeps an astral pair whole', () => {
+    // A lone surrogate is not a character; terminals draw it as U+FFFD.
+    assert.equal(truncate('a👍b', 3), 'a👍');
+    assert.equal(truncate('a👍b', 2), 'a');
+  });
+
+  test('a non-integer max still bounds the result', () => {
+    // `visible === max` could never be true for 3.5, so the loop ran off the
+    // end and returned the whole string — from a function whose contract is a
+    // bound.
+    assert.equal(truncate('abcdef', 3.5), 'abc');
+    assert.ok(visibleLength(truncate('abcdef', 3.5)) <= 3.5);
+  });
+});
+
 // ── truncate ──────────────────────────────────────────────────────────────────
 
 describe('truncate', () => {
@@ -129,28 +204,54 @@ describe('truncate', () => {
   // Hostile / unusual inputs that previous versions scanned via repeated
   // s.slice(i) — performance and correctness regressions to guard.
 
-  test('non-SGR escape (\\x1b[H cursor-home) is counted as one visible byte', () => {
-    // We only emit SGR; a non-SGR escape hitting truncate means the
-    // input was already unusual. Pin current behavior: the ESC byte is
-    // treated as a 1-col character, the subsequent bytes render normally.
+  test('non-SGR escape (\\x1b[H cursor-home) draws no column of its own', () => {
+    // We only emit SGR; a non-SGR escape reaching here means the input was
+    // already unusual, and since sanitize() strips C0/C1 from everything that
+    // arrives on stdin, it can no longer come from outside at all.
+    //
+    // This used to count the ESC byte as one column. It draws nothing, so the
+    // count was one too many and a truncation budget spent a column on a
+    // character that occupies none. The bytes after it are ordinary text —
+    // the terminal consumes them as part of the sequence, but nothing here can
+    // know that without parsing every escape form there is.
     const s = '\x1b[Hhello';
-    // The ESC byte counts as 1, then the '[', 'H', 'h', 'e', 'l', 'l', 'o'
-    // each as 1 → 8 visible chars.
-    assert.equal(visibleLength(s), 8);
-    assert.equal(truncate(s, 2), s.slice(0, 2));
+    assert.equal(visibleLength(s), 7, "ESC draws nothing; '[Hhello' is seven columns");
+    // Two columns of drawn output, with the ESC carried along: '\x1b[H'.
+    assert.equal(truncate(s, 2), '\x1b[H');
   });
 
   test('stray lone \\x1b at end of string does not crash', () => {
-    assert.equal(visibleLength('hi\x1b'), 3);
-    assert.equal(truncate('hi\x1b', 2), 'hi');
+    // Two drawn columns and a byte that draws nothing. Already inside the
+    // budget, so truncate has nothing to do and hands the string back: it
+    // measures columns, it is not a sanitizer. Stripping control bytes from
+    // input that came from outside is sanitize()'s job in stdin.ts.
+    assert.equal(visibleLength('hi\x1b'), 2);
+    assert.equal(truncate('hi\x1b', 2), 'hi\x1b');
   });
 
   test('incomplete SGR sequence at cut boundary', () => {
-    // '\x1b[3' with no terminating 'm' is not valid SGR. The ESC counts
-    // as 1 visible byte; cutting at 2 keeps '\x1b[' and drops '3'.
+    // '\x1b[3' with no terminating 'm' is not valid SGR, so it is measured as
+    // what it literally is: a zero-column ESC and two drawn characters.
     const s = '\x1b[3';
-    assert.equal(visibleLength(s), 3);
-    assert.equal(truncate(s, 2), '\x1b[');
+    assert.equal(visibleLength(s), 2);
+    assert.equal(truncate(s, 2), s, 'already within budget, nothing to cut');
+    assert.equal(truncate(s, 1), '\x1b[');
+  });
+
+  test('the cut never manufactures a dangling ESC', () => {
+    // A zero-width byte, but not the kind that composes with the character
+    // before it, so it does not come along for free the way a combining mark
+    // does. Left at the end of a truncated line it would make the terminal
+    // read whatever is printed next as the remainder of an escape sequence.
+    assert.equal(truncate('hi\x1bab', 2), 'hi');
+  });
+
+  test('a combining mark stays with the character it modifies', () => {
+    // The opposite case: 'e' + U+0301 is one letter and one column. Cutting
+    // between them would change what the reader sees, so the mark comes along
+    // even though the budget is already spent.
+    assert.equal(visibleLength('é'), 1);
+    assert.equal(truncate('aéb', 2), 'aé');
   });
 
   test('handles a long chain of colored segments without O(n²) blow-up', () => {

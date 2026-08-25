@@ -344,7 +344,7 @@ describe('extra usage rendering', () => {
   // then 9 (added " off"). At full tier neighbouring quota segments
   // are 32 visible chars, so the disabled stub left an obvious gap.
   // Now padded to the active tier's width so all segments align.
-  test('disabled extras placeholder pads to the active tier width (full tier)', () => {
+  test('the disabled extras placeholder does not pad off the end of the line', () => {
     const disabled: UsageData = {
       ...baseUsage,
       // Force line 3 to render: opus is non-null so hasLine3 is true.
@@ -352,16 +352,33 @@ describe('extra usage rendering', () => {
       extraUsage: { enabled: false },
     };
     const { line3 } = capture({ stdin: baseStdin, usage: disabled, git: null, now, columns: 200 });
-    // ' ○$:' + ' ' + ' off' = 9 chars; full-tier padding adds 23 trailing spaces.
     assert.ok(line3.includes('○$:'), 'disabled label still rendered');
     assert.ok(line3.includes('off'), 'off marker still rendered');
-    // The trailing spaces are between 'off' and the line end (or the
-    // syncHint). Asserting the full line ends in spaces past the marker
-    // is enough — neighbour quotas still occupy 32 chars apiece.
-    const offIdx = line3.lastIndexOf('off');
-    assert.ok(offIdx >= 0);
-    const tail = line3.slice(offIdx + 3);
-    assert.ok(/^\s+/.test(tail), `expected trailing padding after "off", got: "${tail}"`);
+
+    /*
+     * This segment is last on its line, so padding it to the tier width put
+     * twenty-three spaces past the final character. Invisible, but measured:
+     * the line claimed seventy-seven columns while drawing fifty-four, and
+     * fitLine dropped to a narrower tier — hiding reset times — on every
+     * terminal between those two widths.
+     */
+    const tail = line3.slice(line3.lastIndexOf('off') + 3);
+    assert.equal(tail.replace(/\x1b\[[0-9;]*m/g, ''), '',
+      `nothing may follow the marker but colour resets, got: ${JSON.stringify(tail)}`);
+  });
+
+  test('a narrower terminal keeps the reset slot the padding used to cost it', () => {
+    // The width between what the line draws and what it measured. At 60
+    // columns the full tier fits the drawn content and did not fit the padded
+    // measurement, so this is the tier the padding was silently buying.
+    const disabled: UsageData = {
+      ...baseUsage,
+      opus: 5, opusResetAt: in3d,
+      extraUsage: { enabled: false },
+    };
+    const { line3 } = capture({ stdin: baseStdin, usage: disabled, git: null, now, columns: 60 });
+    assert.ok(vlen(line3) <= 60, `line must fit: ${vlen(line3)} > 60`);
+    assert.ok(/[◑◔◕●○]/.test(line3), 'the reset slot survives at 60 columns');
   });
 });
 
@@ -1036,5 +1053,67 @@ describe('a failure that still carries numbers', () => {
     });
     assert.doesNotMatch(out, /36%/);
     assert.match(out, /⚠/);
+  });
+});
+
+// ── wide characters in the values that come from outside ──────────────────
+
+describe('a project or model name that is not ASCII', () => {
+  /**
+   * An independent column count, so the assertion does not lean on the same
+   * function it is checking. Only the CJK block is recognised, which is all
+   * these cases contain — a test oracle that agreed with `visibleLength` by
+   * calling it would pass no matter how wrong both were.
+   */
+  const WIDE: [number, number][] = [
+    [0x3040, 0x30ff],   // Hiragana and Katakana
+    [0x4e00, 0x9fff],   // CJK unified ideographs
+    [0xac00, 0xd7a3],   // Hangul syllables
+    [0xff01, 0xff60],   // Fullwidth forms
+    [0x1f300, 0x1f9ff], // Emoji
+  ];
+
+  function columnsOf(plain: string): number {
+    let n = 0;
+    for (const ch of plain) {
+      const cp = ch.codePointAt(0) ?? 0;
+      n += WIDE.some(([lo, hi]) => cp >= lo && cp <= hi) ? 2 : 1;
+    }
+    return n;
+  }
+
+  test('a CJK project name does not push line 1 past the terminal width', () => {
+    /*
+     * The reason the width table exists. `日本語プロジェクト` is nine code
+     * units and eighteen columns; measured as nine, the line was built as if
+     * it had nine columns to spare that it did not have, and the terminal
+     * wrapped it onto a second row. On a statusline a wrap is not cosmetic —
+     * Claude Code allots the rows, so the overflow lands wherever it lands.
+     */
+    for (const columns of [40, 60, 80, 120]) {
+      const { line1 } = capture({
+        stdin: { ...baseStdin, cwd: '/home/user/日本語プロジェクト' },
+        usage: baseUsage,
+        git: { branch: 'main', isDirty: false },
+        now,
+        columns,
+        rows: 3,
+      });
+      assert.ok(columnsOf(line1) <= columns,
+        `at ${columns} columns the line drew ${columnsOf(line1)}: ${line1}`);
+    }
+  });
+
+  test('an emoji in the project name is not cut in half', () => {
+    const { line1 } = capture({
+      stdin: { ...baseStdin, cwd: '/home/user/proj-🚀-name' },
+      usage: baseUsage,
+      git: { branch: 'main', isDirty: false },
+      now,
+      columns: 46,
+      rows: 3,
+    });
+    assert.doesNotMatch(line1, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/, 'no lone high surrogate');
+    assert.doesNotMatch(line1, /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/, 'no lone low surrogate');
   });
 });

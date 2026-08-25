@@ -20,13 +20,13 @@ export function terminalDims(stdin: StdinData | null): TerminalDims {
   const columns =
     validDim(stdin?.columns) ??
     validDim((process.stderr as NodeJS.WriteStream).columns) ??
-    validDim(parseInt(process.env['COLUMNS'] ?? '', 10)) ??
+    envDim('COLUMNS') ??
     120;
 
   const rows =
     validDim(stdin?.rows) ??
     validDim((process.stderr as NodeJS.WriteStream).rows) ??
-    validDim(parseInt(process.env['LINES'] ?? '', 10)) ??
+    envDim('LINES') ??
     3;
 
   return { columns, rows: Math.min(rows, 3) };
@@ -44,4 +44,19 @@ function validDim(n: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= MAX_DIM
     ? Math.floor(n)
     : null;
+}
+
+/**
+ * A dimension from the environment, accepted only in the shape a shell writes.
+ *
+ * `parseInt` was the wrong reader here: it stops at the first character it
+ * does not understand and returns what it has, so `COLUMNS=1e5` parsed as
+ * **1** and the statusline rendered into a single column. A value that is not
+ * a plain run of digits is not a dimension, and falling through to the default
+ * is better than rendering to a number nobody meant.
+ */
+function envDim(name: string): number | null {
+  const raw = process.env[name]?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  return validDim(Number(raw));
 }
