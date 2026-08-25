@@ -66,9 +66,24 @@ export { readFileSecure, writeFileSecure, checkFileSafe, type FileSafetyIssue } 
 // Structured warning channel, so a caller's diagnostics land the same way.
 export { warn } from './log.js';
 
-// Credentials, in case a caller needs to know whether this machine has a
-// subscription token at all before showing any quota UI.
-export { readCredentials, getPlanName, keychainServiceName, type Credentials } from './credentials.js';
+/*
+ * Credentials are deliberately NOT exported.
+ *
+ * `readCredentials` returns a live OAuth bearer token. It was exported on the
+ * reasoning that a caller might want to know whether this machine has a
+ * subscription token before showing any quota UI — but no caller ever asked,
+ * and answering that question does not require handing over the token itself.
+ * Both real consumers already learn it from `getUsage`, which returns
+ * `source: 'none'` when there is no subscription to read.
+ *
+ * The export is the whole risk here: it puts a credential one import away from
+ * any code that pulls in this package, including code written later by someone
+ * who will not think about it. Fetching is this package's job precisely so
+ * that nothing else has to hold the token.
+ *
+ * If a caller genuinely needs the has-a-subscription answer without a fetch,
+ * add a `hasSubscription(): boolean` here. Do not re-export the reader.
+ */
 
 // Pure helpers, used by the tests and by renderers.
 export {
