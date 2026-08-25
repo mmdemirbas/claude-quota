@@ -337,10 +337,19 @@ export type DetailLevel = 'full' | 'no-reset' | 'no-pace' | 'compact';
 const DETAIL_LEVELS: DetailLevel[] = ['full', 'no-reset', 'no-pace', 'compact'];
 
 /**
- * Per-tier visible width of a quota / extra-usage segment.
- * Exported so tests don't have to hand-mirror the same literals — the
- * source of truth lives here, and a layout change updates every test
- * that derives its boundaries from these widths in lockstep.
+ * Per-tier visible width of a quota segment — the widths renderQuota produces
+ * from its own label, bar, percentage, pace and reset slots.
+ *
+ * A declared expectation, not the value the layout is built from: nothing in
+ * this file reads it any more, so editing a number here changes what the tests
+ * demand and not one column of what is drawn. That makes it useful in exactly
+ * one direction. A layout change that shifts a segment's width fails the tests
+ * comparing against it, which is the point — but the fix is to change the
+ * layout and then this, in that order.
+ *
+ * (It had one source consumer: the disabled extra-usage placeholder padded
+ * itself to these widths. That segment is last on every line it appears on, so
+ * the padding only ever ran off the end, and it is gone.)
  */
 export const TIER_SEGMENT_WIDTH: Record<DetailLevel, number> = {
   full: 32,
