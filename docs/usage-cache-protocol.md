@@ -156,10 +156,25 @@ the API has no history endpoint and answers only "right now".
 The log is a shared convenience, not an archive. A participant that needs
 unbounded history keeps its own store.
 
-When the file exceeds 4 MB after an append, the holder of the fetch lock
-rewrites it — atomically, via temp file and rename — keeping only readings from
-the last 30 days. 30 days covers the longest window in the API (7 d) four times
-over.
+Two bounds apply, and they are not equals:
+
+| Bound | Value | Force |
+|---|---|---|
+| Retention | 30 days | Preference — what we would like to keep |
+| Size cap | 4 MB | Hard — what the file may cost every other participant |
+
+When the file exceeds the size cap after an append, the holder of the fetch
+lock rewrites it atomically, via temp file and rename. It first drops readings
+older than the retention window. **If the result still exceeds the cap, it
+drops the oldest survivors until it fits**, leaving headroom so the next append
+does not immediately re-trigger.
+
+That second step is required, not an optimisation. At the highest sustainable
+fetch rate — one reading per hard TTL, 720 a day at roughly 350 bytes — 30 days
+is about 7 MB. An implementation that only dropped by age would remove nothing,
+stay over the cap, and compact again on the very next append, rewriting several
+megabytes every couple of minutes for as long as the machine is in use. Every
+compaction MUST end under the cap, so that progress is guaranteed.
 
 Compaction happens under the lock, so no append can be lost to it.
 
