@@ -588,8 +588,16 @@ function paceGauge(pct, elapsedPct) {
 
 function renderDashboard() {
   if (!DATA || !DATA.data) return;
-  var raw = DATA.lastGoodData || DATA.data;
-  if (raw.apiUnavailable && !DATA.lastGoodData) return;
+  // Prefer the reading actually being displayed. It already carries last-good
+  // values when the newest fetch failed, so reaching past it to lastGoodData
+  // made DATA.data unreachable as a display source and left the two adjacent
+  // lines disagreeing about which field was authoritative.
+  function hasNumbers(r) {
+    return !!r && (r.fiveHour != null || r.sevenDay != null || r.sonnet != null
+      || r.opus != null || r.design != null || r.routines != null || r.code != null);
+  }
+  var raw = hasNumbers(DATA.data) ? DATA.data : (DATA.lastGoodData || DATA.data);
+  if (!hasNumbers(raw) && raw.apiUnavailable) return;
 
   // Build dashboard data from cache shape. Labels track the wording on
   // claude.ai/settings/usage so the dashboard and the source of truth
@@ -673,9 +681,22 @@ function renderDashboard() {
     return '$' + Math.round(v / 1000) + 'k';
   }
 
+  // Pace is computed as of the instant the reading was MEASURED, never the
+  // browser's clock.
+  //
+  // pct is frozen at d.fetchedAt; only the clock keeps moving. Dividing a
+  // frozen numerator by an elapsed fraction that grows makes the projection
+  // fall on its own: a 5-hour bucket at 50% with two hours gone projects 125%
+  // and shows "over" in red, then 83% "under" an hour later, 63% after two,
+  // 51% after three — the same number on screen, opposite advice, drifting
+  // toward "you are fine" exactly while a backoff prevents a refresh.
+  //
+  // Anchoring to the measurement freezes the projection with the number it
+  // describes. It goes stale, which is honest and visible in the "N ago"
+  // label, rather than quietly becoming wrong.
   function calcPace(pct, resetAt, windowMs) {
     if (!resetAt || pct === null) return null;
-    const remaining = resetAt - d.now;
+    const remaining = resetAt - d.fetchedAt;
     if (remaining <= 0 || remaining >= windowMs) return null;
     const elapsed = (windowMs - remaining) / windowMs;
     if (elapsed < 0.02) return null;
@@ -690,7 +711,12 @@ function renderDashboard() {
 
   // ── Top: header + status pill ──────────────────────────
   const USAGE_URL = 'https://claude.ai/settings/usage';
-  const isRateLimited = DATA.data && DATA.data.apiError === 'rate-limited';
+  const apiError = (DATA.data && DATA.data.apiError) || null;
+  const isRateLimited = apiError === 'rate-limited';
+  // Any error means the newest fetch failed, not just a 429. readCache and
+  // writeFailure substitute last-good for every error kind, so an http-500 or
+  // a timeout used to render as "live" over hours-old numbers with no banner.
+  const isFailing = apiError !== null;
   const agoSec = Math.max(0, Math.floor((d.now - d.fetchedAt) / 1000));
   // Buckets: <60s -> seconds; <60m -> minutes; <24h -> hours; else days.
   // Avoids the "1612m ago" weirdness when a tab has been open all day.
@@ -701,10 +727,12 @@ function renderDashboard() {
       : agoSec < 86400
         ? Math.floor(agoSec / 3600) + 'h ago'
         : Math.floor(agoSec / 86400) + 'd ago';
-  const pillClass = isRateLimited ? 'pill warn' : 'pill';
+  const pillClass = isFailing ? 'pill warn' : 'pill';
   const pillText = isRateLimited
     ? '<span class="dot"></span> rate-limited \\u00b7 retrying'
-    : '<span class="dot"></span> live \\u00b7 ' + agoStr;
+    : isFailing
+      ? '<span class="dot"></span> not refreshing \\u00b7 ' + agoStr
+      : '<span class="dot"></span> live \\u00b7 ' + agoStr;
 
   let html = '<main>';
   html += '<header class="header">'
@@ -724,12 +752,32 @@ function renderDashboard() {
     html += '<div class="banner">'
       + '<strong>Showing last-good values.</strong> '
       + 'The usage API rate-limited the most recent fetch '
-      + '(' + fmtTime(d.fetchedAt) + '). Numbers will refresh once the '
-      + 'backoff window clears.'
+      // DATA.timestamp, not d.fetchedAt: the latter is when the numbers being
+      // shown were MEASURED, which during a backoff is the last *successful*
+      // reading — so this sentence used to date the 429 to the moment it did
+      // not happen. The entry timestamp is what moves when a fetch is attempted.
+      + '(' + fmtTime(DATA.timestamp || d.fetchedAt) + '). These numbers are from '
+      + fmtTime(d.fetchedAt) + '. They will refresh once the backoff window clears.'
+      + '</div>';
+  } else if (isFailing) {
+    // Every other failure kind reaches here now that last-good is substituted
+    // for all of them. Without this the page showed hours-old numbers under a
+    // "live" pill with nothing explaining why they were not moving.
+    html += '<div class="banner">'
+      + '<strong>Showing last-good values.</strong> '
+      + 'The most recent fetch failed (' + _esc(String(apiError)) + ' at '
+      + fmtTime(DATA.timestamp || d.fetchedAt) + '). These numbers are from '
+      + fmtTime(d.fetchedAt) + '.'
       + '</div>';
   }
 
-  if (d.quotas.length === 0 && !d.extraUsage) {
+  // Not a length check: Design, Routines and Code are pushed unconditionally
+  // as a catalogue of what the API exposes, so the length is never zero and
+  // this state could never render. What makes it the empty state is that no
+  // bucket carries a number.
+  //
+  // (No backticks in this block: it lives inside a template literal.)
+  if (!d.quotas.some(function (q) { return q.pct !== null && q.pct !== undefined; }) && !d.extraUsage) {
     html += '<div class="empty-state">'
       + '<div class="e-title">No usage data yet</div>'
       + '<div class="e-sub">Once Claude Code reports activity, your quotas will appear here. '
@@ -908,7 +956,7 @@ function renderDashboard() {
     const e = d.extraUsage;
     const monthlyLimit = e.monthlyLimit || 0;
     const used = e.usedCredits || 0;
-    const monthlyPct = monthlyLimit > 0 ? Math.min(100, (used / monthlyLimit) * 100) : 0;
+    const monthlyPct = monthlyLimit > 0 ? Math.max(0, Math.min(100, (used / monthlyLimit) * 100)) : 0;
     const balance = e.creditGrant != null ? Math.max(0, e.creditGrant - used) : null;
 
     // Month-elapsed: lets us project month-end spend at the current

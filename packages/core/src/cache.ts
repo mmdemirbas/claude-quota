@@ -50,8 +50,43 @@ function bucketOf(v: unknown): BucketReading | null {
   const util = o.utilization;
   const resets = o.resetsAt;
   return {
-    utilization: typeof util === 'number' && Number.isFinite(util) ? util : null,
+    // Clamped and rounded exactly as the API path is (`clamp` in parse.ts).
+    // A value read off disk used to skip that, so a peer or a hand-edit could
+    // put 1000 or 33.7 into a field renderers size for three digits — which
+    // overflows the column and shifts everything to its right.
+    utilization:
+      typeof util === 'number' && Number.isFinite(util)
+        ? Math.round(Math.max(0, Math.min(100, util)))
+        : null,
     resetsAt: typeof resets === 'string' && resets !== '' ? resets : null,
+  };
+}
+
+/**
+ * Extra-usage state read off disk, validated rather than asserted.
+ *
+ * This used to be a bare cast. The API path rejects a zero or negative
+ * `monthlyLimit` (`parseExtraUsage`), but nothing re-checked a value that came
+ * from the file — so a peer-written or hand-edited entry put `monthlyLimit: 0`
+ * straight into a renderer that divides by it, producing NaN widths, an empty
+ * bar where a full one belongs, and a zero-spend account labelled over-pace.
+ */
+function extraUsageOf(v: unknown): ExtraUsageData | null {
+  if (v == null || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  if (o.enabled !== true) return { enabled: false };
+
+  const num = (x: unknown): number | null =>
+    typeof x === 'number' && Number.isFinite(x) && x >= 0 ? x : null;
+
+  const monthlyLimit = num(o.monthlyLimit);
+  if (monthlyLimit === null || monthlyLimit === 0) return null;
+  const grant = num(o.creditGrant);
+  return {
+    enabled: true,
+    monthlyLimit,
+    usedCredits: num(o.usedCredits) ?? 0,
+    creditGrant: grant,
   };
 }
 
@@ -130,7 +165,7 @@ function coerceReading(v: unknown): Reading | null {
       buckets != null && typeof buckets === 'object'
         ? (buckets as Record<string, BucketReading | null>)
         : {},
-    extraUsage: (o.extraUsage ?? null) as ExtraUsageData | null,
+    extraUsage: extraUsageOf(o.extraUsage),
     error: (o.error ?? null) as Reading['error'],
   };
 }

@@ -191,9 +191,45 @@ export function resetIn(resetAt: Date | null, now: number): string {
   return `${hours}h`;
 }
 
+/**
+ * Does this reading carry anything worth drawing?
+ *
+ * The gate used to be `!usage.apiUnavailable`, which is a claim *about* the
+ * data rather than the data itself — and the two came apart. A failure that
+ * still carries last-good numbers sets the flag, and so does any reading whose
+ * `error` is set, whatever its buckets hold. Every quota was then dropped and a
+ * bare ⚠ printed in place of a full display.
+ *
+ * Asking the numbers directly cannot come apart from them. `apiStatusHint`
+ * already renders the failure glyph independently, so nothing is lost by no
+ * longer consulting the flag here.
+ */
+function hasQuotaNumbers(usage: UsageData | null | undefined): usage is UsageData {
+  if (!usage) return false;
+  return [usage.fiveHour, usage.sevenDay, usage.sonnet, usage.opus,
+    usage.design, usage.routines, usage.code].some((v) => v !== null && v !== undefined)
+    || !!usage.extraUsage?.enabled;
+}
+
 /** Format fetch timestamp as ⟳HH:MM (local time). Exported for testing. */
-export function formatFetchTime(fetchedAt: number): string {
+export function formatFetchTime(fetchedAt: number, now: number = Date.now()): string {
   const d = new Date(fetchedAt);
+  // `resetIn` guards this and this one did not. coerceReading only requires a
+  // finite number, so anything past Date's range yields "⟳NaN:NaN" — eight
+  // visible chars in a six-wide slot, which shifts the whole line right.
+  if (isNaN(d.getTime())) return '⟳--:--';
+
+  const ageMs = now - fetchedAt;
+  // HH:MM alone stopped being unambiguous when the displayed reading could be
+  // old: during a backoff it is the last *successful* measurement, up to a day
+  // back, and "⟳09:00" reads as this morning either way. Past twelve hours,
+  // show the age instead — the point of the stamp is how stale the numbers are.
+  if (ageMs >= 12 * 60 * 60_000) {
+    const days = Math.floor(ageMs / (24 * 60 * 60_000));
+    if (days >= 1) return `⟳${Math.min(days, 99)}d+`;
+    return `⟳${Math.floor(ageMs / (60 * 60_000))}h+`;
+  }
+
   const h = d.getHours().toString().padStart(2, '0');
   const m = d.getMinutes().toString().padStart(2, '0');
   return `⟳${h}:${m}`;
@@ -460,7 +496,16 @@ function renderQuota(
  */
 export function formatMoney(amount: number): string {
   if (amount === 0) return '$0';
-  if (amount < 1)   return `$.${Math.round(amount * 100).toString().padStart(2, '0')}`;
+  // Math.round can carry 0.995+ up to 100, which renders as "$.100" — five
+  // chars where the layout above promises four, overflowing the segment and
+  // swallowing the space before the pace glyph. Reachable through
+  // projectedSpend, which is an arbitrary real. Anything that rounds to a whole
+  // dollar is a whole dollar.
+  if (amount < 1) {
+    const cents = Math.round(amount * 100);
+    if (cents >= 100) return '$1';
+    return `$.${cents.toString().padStart(2, '0')}`;
+  }
   if (amount < 1000) return `$${Math.round(amount)}`;
   const k = Math.round(amount / 1000);
   return `$${k}k`;
@@ -646,7 +691,7 @@ export function render(input: RenderInput): void {
       // Link is appended to ctx so truncation drops it last (after the
       // 5h/7d quotas), keeping it visible on typical-width terminals.
       const ctxCompact = `${dim('ctx:')} ${ctxColor(ctxPct)}${ctxPctStr}${R}${link}`;
-      const showQuotas = !!usage && !usage.apiUnavailable;
+      const showQuotas = hasQuotaNumbers(usage);
       const parts: (string | null)[] = [
         c(CYAN, modelText),
         ctxCompact,
@@ -685,11 +730,11 @@ export function render(input: RenderInput): void {
   //   Line 2: plan │  5h bar pct% pace reset │ snt bar pct% pace reset
   //   Line 3: time │  7d bar pct% pace reset │  ●$ bar val  pace limit
 
-  if (usage && !usage.apiUnavailable) {
-    // syncHint slot at the right edge of line 2/3. Only rate-limited can
-    // reach this branch (apiUnavailable falls through to the standalone
-    // line below); apiStatusHint still works as a single source of truth
-    // because its rate-limited path is the same as the old syncHint.
+  if (usage && hasQuotaNumbers(usage)) {
+    // syncHint slot at the right edge of line 2/3. Any failure kind can reach
+    // this branch now — a reading that still carries numbers is drawn whatever
+    // went wrong with the most recent refresh — and apiStatusHint is the single
+    // source of truth for which glyph says so.
     const syncHint = status.padded;
     const syncW = status.width;
 
@@ -757,14 +802,21 @@ export function render(input: RenderInput): void {
         safeEmit('line2-glyph', () => `${R}${status.glyph}`);
       }
     }
-  } else if (usage?.apiUnavailable) {
-    // Standalone status line. Same glyph + colour as the rows=1 hint
-    // and the syncHint slot — single source of truth via apiStatusHint.
-    safeEmit('line2-status', () =>
-      planText
-        ? `${R}${c(CYAN, planText)}${dim(' │ ')}${status.glyph}`
-        : `${R}${status.glyph}`,
-    );
+  } else if (status.glyph) {
+    // Nothing to draw but something to say: a failure with no numbers behind
+    // it. The condition is the glyph rather than `apiUnavailable`, because the
+    // branch above is now gated on whether numbers exist, and those two facts
+    // are not the same one.
+    //
+    // Truncated like every other emit path. Built directly, this line ignored
+    // the width budget entirely and wrapped onto a row Claude Code had not
+    // allocated.
+    safeEmit('line2-status', () => {
+      const body = planText
+        ? `${c(CYAN, planText)}${dim(' │ ')}${status.glyph}`
+        : `${status.glyph}`;
+      return `${R}${truncate(body, cols)}`;
+    });
   } else if (planText) {
     safeEmit('line2-plan', () => `${R}${c(CYAN, planText)}`);
   }
