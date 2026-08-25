@@ -1,9 +1,16 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { configDir } from '@mmdemirbas/claude-usage';
 
 /** Directory under the user's home that holds caches + the dashboard. */
 export function pluginDir(): string {
-  return join(homedir(), '.claude', 'plugins', 'claude-quota');
+  // configDir(), not homedir(): CLAUDE_CONFIG_DIR is how a second account is
+  // configured, and this directory holds that account's dashboard, its data.js
+  // and its debug dumps. Hardcoding the home directory made two accounts write
+  // one shared dashboard, and pointed the legacy-cache migration at a path the
+  // plugin never wrote under a custom config dir — so the upgrade path was dead
+  // exactly where it was needed.
+  return join(configDir(), 'plugins', 'claude-quota');
 }
 
 // ── Cache-file ABI ────────────────────────────────────────────────────────
@@ -39,5 +46,9 @@ export function dashboardHtmlPath(): string {
  * path separators.
  */
 export function dashboardFileUrl(): string {
-  return new URL(`file://${dashboardHtmlPath()}`).toString();
+  // pathToFileURL, not string interpolation. `new URL(\`file://${path}\`)` reads
+  // a `#` in the path as a fragment and a `?` as a query, so a home directory
+  // called `/Users/a#b` produced a URL pointing at `/Users/a`, and a `%` made
+  // the URL fail to decode at all. pathToFileURL percent-escapes all three.
+  return pathToFileURL(dashboardHtmlPath()).toString();
 }

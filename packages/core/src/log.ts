@@ -13,7 +13,9 @@ export function warn(event: string, context?: Record<string, string | number>): 
   const parts: string[] = [`[claude-quota] ${event}`];
   if (context) {
     for (const [k, v] of Object.entries(context)) {
-      parts.push(`${k}=${v}`);
+        // A newline in a value splits one record into two, and callers pass
+      // caught error messages here. Keep the contract the docstring states.
+      parts.push(`${k}=${String(v).replace(/[\r\n]+/g, ' ')}`);
     }
   }
   try {

@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join, normalize, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 /**
  * Claude Code's configuration directory.
@@ -75,11 +75,4 @@ export function debugPath(name: string): string {
  */
 export function legacyCachePath(): string {
   return join(configDir(), 'plugins', 'claude-quota', 'data.js');
-}
-
-/** True when `child` is inside `parent`, used to keep writes within the usage dir. */
-export function isInside(parent: string, child: string): boolean {
-  const p = normalize(resolve(parent));
-  const c = normalize(resolve(child));
-  return c === p || c.startsWith(p.endsWith('/') ? p : `${p}/`);
 }

@@ -279,3 +279,56 @@ describe('getEffortLevel', () => {
     assert.equal(getEffortLevel({ effort_level: '' }), null);
   });
 });
+
+/**
+ * stdout *is* the statusline, so a control character in a value taken from
+ * stdin is not a display quirk — it is a command the terminal will obey. And
+ * neither value is beyond outside influence: a repository can be cloned into a
+ * directory of someone else's choosing.
+ */
+describe('values that reach the terminal', () => {
+  const ESC = String.fromCharCode(27);
+  const BEL = String.fromCharCode(7);
+  const NL = String.fromCharCode(10);
+
+  const hasControl = (s: string): boolean =>
+    Array.from(s).some((ch) => {
+      const c = ch.codePointAt(0) ?? 0;
+      return c < 0x20 || (c >= 0x7f && c <= 0x9f);
+    });
+
+  test('a clear-screen and set-title sequence in the model name is stripped', () => {
+    const out = getModelName({ model: { display_name: `${ESC}[2J${ESC}]0;pwned${BEL}` } });
+    assert.equal(hasControl(out), false);
+    assert.doesNotMatch(out, new RegExp(ESC));
+  });
+
+  test('a model name that is nothing but control characters falls back', () => {
+    assert.equal(getModelName({ model: { display_name: `${ESC}${BEL}` } }), 'Claude');
+  });
+
+  test('a newline in cwd cannot add a line to the statusline', () => {
+    const out = getProjectName({ cwd: `/a/proj${NL}FAKE LINE` });
+    assert.ok(out !== null);
+    assert.equal(hasControl(out), false);
+  });
+
+  test('an ordinary name is untouched', () => {
+    assert.equal(getModelName({ model: { display_name: 'Claude Sonnet 4.6' } }), 'Claude Sonnet 4.6');
+    assert.equal(getProjectName({ cwd: '/Users/md/dev/lakelab' }), 'lakelab');
+  });
+
+  test('a name is cut by code point, never through an astral pair', () => {
+    // `slice` counts UTF-16 units, so this used to end in half an emoji.
+    const out = getProjectName({ cwd: '/x/' + 'a'.repeat(30) + '\u{1F44D}\u{1F44D}' });
+    assert.ok(out !== null);
+    assert.doesNotMatch(out, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/, 'no lone high surrogate');
+    assert.doesNotMatch(out, /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/, 'no lone low surrogate');
+    assert.equal(Array.from(out).length, PROJECT_NAME_MAX, 'and still fits the cap');
+  });
+
+  test('non-ASCII scripts and emoji are not stripped as if they were control characters', () => {
+    assert.equal(getProjectName({ cwd: '/x/中文测试' }), '中文测试');
+    assert.equal(getModelName({ model: { display_name: 'Claude \u{1F680}' } }), 'Claude \u{1F680}');
+  });
+});

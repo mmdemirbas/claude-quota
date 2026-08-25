@@ -91,7 +91,17 @@ export function truncate(s: string, max: number): string {
     }
     if (visible === max) break;
     visible++;
-    i++;
+    /*
+     * Advance by code point, not code unit.
+     *
+     * A lone surrogate is not a character: cutting between the halves of an
+     * astral pair leaves half of one, which terminals render as U+FFFD.
+     * `truncate('a👍b', 2)` used to produce `a\ud83d`. Counting the pair as one
+     * visible column is also closer to the truth than counting it as two, even
+     * though the real answer depends on the terminal's width table.
+     */
+    const code = s.codePointAt(i);
+    i += code !== undefined && code > 0xffff ? 2 : 1;
   }
 
   let out = s.slice(0, i);
