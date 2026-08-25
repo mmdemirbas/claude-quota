@@ -68,7 +68,7 @@ export { warn } from './log.js';
 
 // Credentials, in case a caller needs to know whether this machine has a
 // subscription token at all before showing any quota UI.
-export { readCredentials, getPlanName, type Credentials } from './credentials.js';
+export { readCredentials, getPlanName, keychainServiceName, type Credentials } from './credentials.js';
 
 // Pure helpers, used by the tests and by renderers.
 export {

@@ -255,11 +255,22 @@ Authorization: Bearer <accessToken>
 anthropic-beta: oauth-2025-04-20
 ```
 
-The token is Claude Code's own OAuth credential: macOS Keychain service
-`Claude Code-credentials`, or `$CLAUDE_CONFIG_DIR/.credentials.json`, field
-`claudeAiOauth.accessToken`. A participant MUST treat a credential with
-`expiresAt` in the past, or a non-numeric `expiresAt`, as absent. No participant
-refreshes the token; that is Claude Code's job.
+The token is Claude Code's own OAuth credential, from exactly one of:
+
+- macOS Keychain, service `Claude Code-credentials` when the config directory is
+  the default `~/.claude`, or `Claude Code-credentials-<h>` otherwise, where
+  `<h>` is the first 8 hex characters of `sha256(normalised absolute path)`.
+- `$CLAUDE_CONFIG_DIR/.credentials.json`, field `claudeAiOauth.accessToken`.
+
+**A participant MUST NOT fall back from the hashed service name to the bare
+one.** The config directory is how a second account is configured, so a missing
+hashed entry means that account has no credential — not that the default
+account's will do. Falling back reads one account's usage into another
+account's cache, and nothing downstream can detect it. Show no quota instead.
+
+A participant MUST treat a credential with `expiresAt` in the past, or a
+non-numeric `expiresAt`, as absent. No participant refreshes the token; that is
+Claude Code's job.
 
 `ANTHROPIC_BASE_URL` is deliberately ignored — the OAuth usage endpoint is tied
 to anthropic.com and does not exist on a proxy or a self-hosted gateway.

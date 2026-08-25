@@ -9,10 +9,11 @@ import https from 'node:https';
  * assumption held in the board's suite until a test reached the real usage API,
  * spent real quota, and was noticed only because an unrelated assertion failed.
  *
- * `CLAUDE_CONFIG_DIR` is not a sandbox — the keychain lookup falls back to the
- * default service name, so a test on a machine with a real Claude login finds a
- * usable token no matter where the config directory points. Nothing about
- * pointing HOME at a temp directory prevents a live call.
+ * Pointing `CLAUDE_CONFIG_DIR` or HOME at a temp directory is not by itself a
+ * sandbox. It is closer than it was — the keychain lookup no longer falls back
+ * to the default service name — but a test that plants a `.credentials.json`,
+ * or runs on a machine where the hashed entry happens to exist, still holds a
+ * usable token. The only reliable statement is the one this file makes.
  *
  * Preloaded with `node --import`, so it is in place before any test module runs.
  */

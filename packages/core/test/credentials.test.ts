@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { getPlanName, parseCredentials, readFromFile, type CredentialsFile } from '../src/credentials.js';
+import { getPlanName, parseCredentials, readFromFile, type CredentialsFile, keychainServiceName } from '../src/credentials.js';
 
 const NOW = 1_700_000_000_000; // fixed reference timestamp (ms)
 
@@ -169,5 +169,57 @@ describe('getPlanName', () => {
     // Unknown subscription types are returned title-cased rather than rejected,
     // so new plan tiers surface in the UI before the code is updated.
     assert.equal(getPlanName('enterprise'), 'Enterprise');
+  });
+});
+
+/**
+ * A custom CLAUDE_CONFIG_DIR is how a second Claude account is configured, so
+ * the keychain lookup for one config directory must never reach another's
+ * credential. It used to: a custom directory whose hashed entry was missing
+ * fell back to the bare service name — which is the *default* account's — and
+ * the caller then fetched that account's usage and, because the shared cache is
+ * keyed by config directory, filed it under the second account.
+ */
+describe('keychain service scoping', () => {
+  let saved: string | undefined;
+
+  before(() => { saved = process.env.CLAUDE_CONFIG_DIR; });
+  after(() => {
+    if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = saved;
+  });
+
+  test('the default config dir uses the bare service name', () => {
+    process.env.CLAUDE_CONFIG_DIR = path.join(os.homedir(), '.claude');
+    assert.equal(keychainServiceName(), 'Claude Code-credentials');
+  });
+
+  test('an unset config dir resolves to the same default', () => {
+    delete process.env.CLAUDE_CONFIG_DIR;
+    assert.equal(keychainServiceName(), 'Claude Code-credentials');
+  });
+
+  test('a custom config dir uses a hashed name and never the bare one', () => {
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/some-other-account/.claude';
+    const name = keychainServiceName();
+    assert.notEqual(name, 'Claude Code-credentials', 'must not reach the default account');
+    assert.match(name, /^Claude Code-credentials-[0-9a-f]{8}$/);
+  });
+
+  test('the mapping is one-to-one: different dirs, different names', () => {
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/account-a/.claude';
+    const a = keychainServiceName();
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/account-b/.claude';
+    const b = keychainServiceName();
+    assert.notEqual(a, b);
+  });
+
+  test('the name is stable across equivalent spellings of one path', () => {
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/account-a/.claude';
+    const plain = keychainServiceName();
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/account-a/./sub/../.claude';
+    assert.equal(keychainServiceName(), plain, 'normalisation must not split one account in two');
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/account-a/.claude/';
+    assert.equal(keychainServiceName(), plain, 'a trailing slash is the same directory');
   });
 });
