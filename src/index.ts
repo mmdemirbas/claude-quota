@@ -1,32 +1,38 @@
 #!/usr/bin/env node
 import { readStdin } from './stdin.js';
-import { getUsage, getCreditGrant, bumpCacheTimestamp, ensureProfileCached, isFetchLockHeld } from './usage.js';
+import {
+  getUsage,
+  getCreditGrant,
+  bumpTimestamp,
+  ensureProfileCached,
+  isFetchLockHeld,
+  writeFileSecure,
+  warn,
+} from '@mmdemirbas/claude-usage';
 import { getGitStatus } from './git.js';
 import { render } from './render.js';
 import { terminalDims } from './terminal.js';
 import { ensureDashboardHtml } from './dashboard.js';
-import { writeFileSecure } from './secure-fs.js';
-import { warn } from './log.js';
+import { writeDashboardData, writeDashboardCreditGrant } from './dashboard-data.js';
+import { pluginDir } from './paths.js';
 import { fileURLToPath } from 'node:url';
 import { realpathSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 
 const DEBUG = process.env.CLAUDE_QUOTA_DEBUG === '1';
 
 /**
- * Persist a debug snapshot under the plugin dir. Contents can include
- * stdin context (cwd, transcript_path) which is not a secret but leaks
- * user activity if another local user can read the file. Goes through
- * writeFileSecure so the dump lands with mode 0o600.
+ * Persist a debug snapshot under the plugin dir. Contents can include stdin
+ * context (cwd, transcript_path) which is not a secret but leaks user activity
+ * if another local user can read the file. Goes through writeFileSecure so the
+ * dump lands with mode 0o600.
  */
 function debugDump(filename: string, data: unknown): void {
   if (!DEBUG) return;
   try {
-    const dir = join(homedir(), '.claude', 'plugins', 'claude-quota');
-    mkdirSync(dir, { recursive: true });
-    writeFileSecure(join(dir, filename), JSON.stringify(data, null, 2));
+    mkdirSync(pluginDir(), { recursive: true });
+    writeFileSecure(join(pluginDir(), filename), JSON.stringify(data, null, 2));
   } catch { /* ignore */ }
 }
 
@@ -50,54 +56,65 @@ async function main(): Promise<void> {
       return;
     }
 
-    // Warm the profile cache before getUsage / getCreditGrant fan out.
-    // Fast on cache hit (a single 0o600 file read); cold path costs one
-    // /api/oauth/profile RTT once a day. Pays back by letting getUsage's
-    // livePlanName see the live API tier on the very first render after
-    // a fresh install or a 24-hour profile-TTL expiry — otherwise that
-    // render shows a plan name derived from the stale credentials file.
+    // Warm the profile cache before getUsage / getCreditGrant fan out. Fast on
+    // a hit; one /api/oauth/profile round trip a day on a miss. Pays back by
+    // letting the first render after a fresh install show the live API tier
+    // rather than a name derived from a stale credential.
     await ensureProfileCached();
 
-    const [{ data: usage, isStale }, git, creditGrant] = await Promise.all([
+    const [usage, git, creditGrant] = await Promise.all([
       getUsage(),
       stdin.cwd ? Promise.resolve(getGitStatus(stdin.cwd)) : Promise.resolve(null),
       getCreditGrant(),
     ]);
 
-    // Merge credit grant into extra usage data — only meaningful when
-    // extras are actually enabled (the disabled variant is just a flag).
-    if (usage?.extraUsage?.enabled && creditGrant !== null) {
-      usage.extraUsage = { ...usage.extraUsage, creditGrant };
+    // Merge the credit grant into extra usage — only meaningful when extras
+    // are actually enabled; the disabled variant is just a flag.
+    if (usage.data?.extraUsage?.enabled && creditGrant !== null) {
+      usage.data.extraUsage = { ...usage.data.extraUsage, creditGrant };
     }
 
-    if (isStale && !isFetchLockHeld()) {
-      // A spawn is only useful if no fetch is in flight. The on-disk
-      // lock file is the same one acquireFetchLock would consult — if
-      // it's already held, our spawned child would just race to fail
-      // at lock acquisition and return without fetching. Saves the
-      // process-spawn cost on every parallel statusline instance.
+    if (usage.isStale && !isFetchLockHeld()) {
+      // A spawn is only useful when no fetch is in flight: a child that loses
+      // the lock exits without fetching, so the process cost buys nothing.
       //
-      // Bump before spawning so a third parallel instance landing
-      // between here and the child's own bump sees a fresh-looking
-      // cache and skips the redundant refresh. The child still bumps
-      // inside getUsage — double-bump is cheap (a single small file
-      // write).
-      bumpCacheTimestamp();
+      // Bump before spawning so a third instance landing between here and the
+      // child's own bump sees a fresh-looking entry and skips its own
+      // refresh. The child bumps again inside getUsage; a double bump is one
+      // small file write.
+      bumpTimestamp(Date.now());
       spawnBackgroundRefresh(scriptPath);
     }
 
     const { columns, rows } = terminalDims(stdin);
-    render({ stdin, usage, git, columns, rows });
+    render({ stdin, usage: usage.data, git, columns, rows });
 
-    // Ensure the dashboard HTML shell exists (data.js is written by usage.ts)
+    // Republish the dashboard's derived data + shell so a browser reload shows
+    // what this render showed.
+    writeDashboardData(usage.data);
+    writeDashboardCreditGrant(creditGrant);
     ensureDashboardHtml();
   } catch (error) {
-    // stdout IS the statusline — error text here would render literally
-    // in Claude Code. Send to stderr so the terminal (not the statusline)
-    // surfaces the failure.
+    // stdout IS the statusline — error text here renders literally in Claude
+    // Code. Send it to stderr so the terminal surfaces the failure instead.
     const msg = error instanceof Error ? error.message : 'Unknown error';
     warn('render failed', { msg });
   }
+}
+
+/**
+ * Refresh the shared cache and exit. No stdin, no render.
+ *
+ * This is what makes the statusline a *participant* rather than an owner: any
+ * other program can trigger the same refresh by calling getUsage itself, and
+ * this path exists only so a terminal redraw can hand the work to a detached
+ * child instead of blocking the draw on a network round trip.
+ */
+async function background(): Promise<void> {
+  const usage = await getUsage({ forceRefresh: true });
+  const creditGrant = await getCreditGrant();
+  writeDashboardData(usage.data);
+  writeDashboardCreditGrant(creditGrant);
 }
 
 // Run when executed directly
@@ -109,8 +126,7 @@ const isSame = (a: string, b: string): boolean => {
 };
 if (argvPath && isSame(argvPath, scriptPath)) {
   if (process.argv.includes('--background')) {
-    // Background refresh: update cache silently, no render
-    void getUsage({ forceRefresh: true });
+    void background();
   } else {
     void main();
   }

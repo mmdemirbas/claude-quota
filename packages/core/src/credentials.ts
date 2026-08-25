@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import { createHash } from 'node:crypto';
 import { readFileSecure } from './secure-fs.js';
 import { warn } from './log.js';
+import { configDir } from './paths.js';
 
 const KEYCHAIN_SERVICE = 'Claude Code-credentials';
 const KEYCHAIN_TIMEOUT_MS = 3000;
@@ -25,16 +26,9 @@ export interface CredentialsFile {
   };
 }
 
-function getConfigDir(): string {
-  const env = process.env.CLAUDE_CONFIG_DIR?.trim();
-  if (env) return env;
-  return path.join(os.homedir(), '.claude');
-}
-
 function getServiceNames(): string[] {
-  const configDir = getConfigDir();
   const defaultDir = path.normalize(path.resolve(path.join(os.homedir(), '.claude')));
-  const normalizedConfig = path.normalize(path.resolve(configDir));
+  const normalizedConfig = path.normalize(path.resolve(configDir()));
 
   if (normalizedConfig === defaultDir) {
     return [KEYCHAIN_SERVICE];
@@ -105,9 +99,9 @@ function readFromKeychain(now: number): Credentials | null {
   return null;
 }
 
-/** Exported for testing. Reads `.credentials.json` under getConfigDir(). */
+/** Exported for testing. Reads `.credentials.json` under the Claude config dir. */
 export function readFromFile(now: number): Credentials | null {
-  const credPath = path.join(getConfigDir(), '.credentials.json');
+  const credPath = path.join(configDir(), '.credentials.json');
   // Refuse to read if perms/ownership would let another local user swap or
   // read the file. A compromised .credentials.json exposes a usable OAuth
   // bearer token — we'd rather fail auth than consume a planted file.

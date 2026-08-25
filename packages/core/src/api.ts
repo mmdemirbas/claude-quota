@@ -1,8 +1,8 @@
 import * as https from 'node:https';
 import { StringDecoder } from 'node:string_decoder';
 import type { ClientRequest, IncomingMessage } from 'node:http';
-import type { ApiError, UsageApiResponse } from '../types.js';
-import { warn } from '../log.js';
+import type { ApiError, UsageApiResponse } from './types.js';
+import { warn } from './log.js';
 import { API_TIMEOUT_MS, MAX_RESPONSE_BODY, MIN_TLS_VERSION } from './constants.js';
 import { parseRetryAfter } from './parse.js';
 
@@ -109,6 +109,9 @@ export function requestApi(
     const timeoutMs = opts?.timeoutMs ?? API_TIMEOUT_MS;
     const requestFn = opts?.httpsRequest ?? https.request;
     let settled = false;
+    // Assigned once, below, but it must be declared first: `finish` closes over
+    // it and the timer's callback closes over `req`, which does not exist yet.
+    // eslint-disable-next-line prefer-const
     let deadline: NodeJS.Timeout | undefined;
     const finish = (v: RequestOutcome): void => {
       if (settled) return;

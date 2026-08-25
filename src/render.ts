@@ -2,7 +2,7 @@ import type { StdinData, UsageData, GitStatus } from './types.js';
 import { getModelName, getContextPercent, getProjectName, getEffortLevel } from './stdin.js';
 import { visibleLength, truncate, hyperlink } from './ansi.js';
 import { dashboardFileUrl } from './paths.js';
-import { warn } from './log.js';
+import { warn } from '@mmdemirbas/claude-usage';
 
 // ── String coercion ───────────────────────────────────────────────────────
 //

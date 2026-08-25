@@ -1,4 +1,4 @@
-import type { ExtraUsageData, UsageApiResponse, UsageData } from '../types.js';
+import type { ExtraUsageData, UsageApiResponse, UsageData } from './types.js';
 import {
   CACHE_RATE_LIMITED_BASE_MS,
   CACHE_RATE_LIMITED_JITTER,

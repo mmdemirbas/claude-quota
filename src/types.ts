@@ -21,121 +21,18 @@ export interface StdinData {
   rows?: number;
 }
 
-/** Full usage API response from api.anthropic.com/api/oauth/usage.
- *
- * Anthropic uses internal codenames for newer buckets (cowork, omelette,
- * oauth_apps) and surfaces them on claude.ai/settings/usage with friendlier
- * labels. The codename ↔ label mapping is undocumented and inferred — when
- * a quota fails to render, run with CLAUDE_QUOTA_DEBUG=1 to dump the raw
- * response to .debug-api.json and compare keys with claude.ai. */
-export interface UsageApiResponse {
-  five_hour?: { utilization?: number; resets_at?: string };
-  seven_day?: { utilization?: number; resets_at?: string };
-  seven_day_sonnet?: { utilization?: number; resets_at?: string };
-  seven_day_opus?: { utilization?: number; resets_at?: string };
-  seven_day_oauth_apps?: { utilization?: number; resets_at?: string } | null;
-  seven_day_cowork?: { utilization?: number; resets_at?: string } | null;
-  seven_day_omelette?: { utilization?: number; resets_at?: string } | null;
-  extra_usage?: {
-    is_enabled?: boolean;
-    monthly_limit?: number;
-    used_credits?: number;
-    utilization?: number | null;
-  };
-}
-
-export type ApiError = 'rate-limited' | 'network' | 'timeout' | 'parse' | `http-${number}`;
-
-/** Parsed usage data for rendering */
-export interface UsageData {
-  planName: string;
-  /** 5-hour session utilization 0-100 */
-  fiveHour: number | null;
-  fiveHourResetAt: Date | null;
-  /** 7-day all-models utilization 0-100 */
-  sevenDay: number | null;
-  sevenDayResetAt: Date | null;
-  /** 7-day sonnet-only utilization 0-100 */
-  sonnet: number | null;
-  sonnetResetAt: Date | null;
-  /** 7-day opus-only utilization 0-100 */
-  opus: number | null;
-  opusResetAt: Date | null;
-  /** 7-day Claude Design (cowork) utilization 0-100 */
-  design: number | null;
-  designResetAt: Date | null;
-  /** 7-day Claude Routines (oauth apps) utilization 0-100 */
-  routines: number | null;
-  routinesResetAt: Date | null;
-  /** 7-day Claude Code (omelette) utilization 0-100 */
-  code: number | null;
-  codeResetAt: Date | null;
-  /** Extra usage info */
-  extraUsage: ExtraUsageData | null;
-  /** API error state */
-  apiUnavailable?: boolean;
-  apiError?: ApiError;
-  /** Unix ms when this data was fetched from the API (or loaded from cache). */
-  fetchedAt?: number;
-}
-
-/**
- * Discriminated on `enabled` so the disabled state cannot accidentally
- * carry zero values that a caller might divide. The renderer narrows
- * via `if (extra.enabled) { … }` before reading the numeric fields.
- */
-export type ExtraUsageData =
-  | { enabled: false }
-  | {
-      enabled: true;
-      monthlyLimit: number;
-      usedCredits: number;
-      /** Total prepaid credit grant in dollars. null when unknown. */
-      creditGrant: number | null;
-    };
-
-/** Profile API response from /api/oauth/profile */
-export interface ProfileApiResponse {
-  organization?: {
-    uuid?: string;
-    organization_type?: string;
-    rate_limit_tier?: string;
-  };
-}
-
-/** Credit grant API response from /api/oauth/organizations/{orgUUID}/overage_credit_grant */
-export interface CreditGrantApiResponse {
-  available?: boolean;
-  granted?: boolean;
-  amount_minor_units?: number;
-  currency?: string;
-}
-
-/** File-based profile cache */
-export interface ProfileCacheFile {
-  orgUUID: string;
-  /** Live rate_limit_tier from profile API (e.g. "default_claude_max_20x") */
-  rateLimitTier?: string;
-  /** Live organization_type from profile API (e.g. "claude_max") */
-  organizationType?: string;
-  timestamp: number;
-}
-
-/** File-based credit grant cache */
-export interface CreditGrantCacheFile {
-  /** Credit grant in dollars (null if unavailable) */
-  creditGrant: number | null;
-  timestamp: number;
-}
-
-/** File-based cache entry */
-export interface CacheFile {
-  data: UsageData;
-  timestamp: number;
-  rateLimitedCount?: number;
-  retryAfterUntil?: number;
-  lastGoodData?: UsageData;
-}
+// Everything about usage measurement now lives in the shared package: the
+// on-disk protocol, the fetch, the coordination. Re-exported here so the
+// renderer keeps importing its types from one place.
+export type {
+  ApiError,
+  CreditGrantApiResponse,
+  ExtraUsageData,
+  ProfileApiResponse,
+  UsageApiResponse,
+  UsageData,
+  UsageResult,
+} from '@mmdemirbas/claude-usage';
 
 export interface GitStatus {
   branch: string;

@@ -38,3 +38,11 @@ export const API_TIMEOUT_MS = 15_000;
 // API-level limits.
 export const MAX_RESPONSE_BODY = 1_048_576; // 1 MB body cap before we destroy the request.
 export const MIN_TLS_VERSION = 'TLSv1.2' as const;
+
+// ── Readings log ───────────────────────────────────────────────────────────
+//
+// The log is a shared convenience, not an archive: a participant that needs
+// unbounded history keeps its own store. These two bound what the shared file
+// costs everyone else.
+export const READINGS_COMPACT_BYTES = 4 * 1024 * 1024;  // compact once the file passes 4 MB
+export const READINGS_RETENTION_MS = 30 * 24 * 60 * 60_000; // keep 30 days — four times the longest window

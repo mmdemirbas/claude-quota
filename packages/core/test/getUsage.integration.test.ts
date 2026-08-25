@@ -3,18 +3,18 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { getUsage, type FetchApiFn } from '../src/usage.js';
-import type { UsageApiResponse } from '../src/types.js';
+import { getUsage, readReadings, type FetchApiFn } from '../src/index.js';
+import { usageCachePath, usageDir, readingsPath, legacyCachePath } from '../src/paths.js';
+import type { CacheEntry, UsageApiResponse } from '../src/types.js';
 
-// POSIX-only: we redirect HOME to a tmp dir so pluginDir() resolves
-// under our control. Windows uses USERPROFILE which works the same way,
-// but file-mode 0o600 enforcement in the secure-fs path is POSIX-only.
+// POSIX-only: we redirect HOME and CLAUDE_CONFIG_DIR to a tmp dir so the
+// shared usage directory resolves under our control. Windows uses USERPROFILE
+// the same way, but the 0o600 enforcement in secure-fs is POSIX-only.
 const isPosix = process.platform !== 'win32';
 
 describe('getUsage orchestration', { skip: !isPosix }, () => {
   let tmpHome: string;
   let cfgDir: string;
-  let pluginDir: string;
   let prevHome: string | undefined;
   let prevCfg: string | undefined;
   let prevSilent: string | undefined;
@@ -24,8 +24,7 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
   before(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-quota-getUsage-'));
     cfgDir = path.join(tmpHome, '.claude');
-    pluginDir = path.join(cfgDir, 'plugins', 'claude-quota');
-    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.mkdirSync(cfgDir, { recursive: true });
 
     prevHome = process.env.HOME;
     prevCfg = process.env.CLAUDE_CONFIG_DIR;
@@ -69,11 +68,15 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
   });
 
   beforeEach(() => {
-    // Wipe cache + lock between tests so each starts cold.
-    for (const f of ['data.js', '.fetch.lock', '.profile-cache.json', 'credit-grant.js', '.credit-grant.lock']) {
-      try { fs.rmSync(path.join(pluginDir, f), { force: true }); } catch { /* ignore */ }
-    }
+    // Wipe the whole shared directory plus any legacy cache, so each test
+    // starts cold and no migration fires except where a test plants one.
+    try { fs.rmSync(usageDir(), { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(path.dirname(legacyCachePath()), { recursive: true, force: true }); } catch { /* ignore */ }
   });
+
+  function readEntryFile(): CacheEntry {
+    return JSON.parse(fs.readFileSync(usageCachePath(), 'utf8')) as CacheEntry;
+  }
 
   function makeFetcher(response: { data: UsageApiResponse | null; error?: 'rate-limited' | 'network' | 'timeout' | 'parse' | `http-${number}`; retryAfterSec?: number }, calls?: { count: number }): FetchApiFn {
     return async (_token: string) => {
@@ -108,7 +111,8 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
 
   test('peer holding the fetch lock yields without firing a duplicate fetch', async () => {
     // Plant a fresh peer-held lock.
-    fs.writeFileSync(path.join(pluginDir, '.fetch.lock'), '99999', { mode: 0o600 });
+    fs.mkdirSync(usageDir(), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(usageDir(), '.fetch.lock'), '99999', { mode: 0o600 });
 
     const calls = { count: 0 };
     const fetcher = makeFetcher({ data: goodResponse }, calls);
@@ -154,13 +158,10 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
     // Second 429 — backoff counter should now be 2 (escalated, not reset to 1).
     await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: null, error: 'rate-limited' }, calls) });
 
-    // Read the on-disk cache to confirm the counter survived.
-    const raw = fs.readFileSync(path.join(pluginDir, 'data.js'), 'utf8');
-    const json = raw.slice(raw.indexOf('=') + 1).replace(/;\s*$/, '');
-    const cache = JSON.parse(json);
-    assert.equal(cache.rateLimitedCount, 2, 'counter must escalate across the 500');
-    assert.ok(cache.lastGoodData, 'lastGoodData must survive the 500');
-    assert.equal(cache.lastGoodData.fiveHour, 25);
+    const entry = readEntryFile();
+    assert.equal(entry.backoff.rateLimitedCount, 2, 'counter must escalate across the 500');
+    assert.ok(entry.lastGood, 'lastGood must survive the 500');
+    assert.equal(entry.lastGood?.buckets.fiveHour?.utilization, 25);
   });
 
   // ── Retry-After upper bound ───────────────────────────────────────────────
@@ -178,29 +179,25 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
     // effective retryUntil is timestamp + 24h, which is already past — so
     // the read should fall through and the next getUsage must fetch.
     const ancient = Date.now() - 25 * 3600_000;
-    const planted = {
-      data: {
-        planName: 'Max 20x',
-        fiveHour: null, fiveHourResetAt: null,
-        sevenDay: null, sevenDayResetAt: null,
-        sonnet: null, sonnetResetAt: null,
-        opus: null, opusResetAt: null,
-        design: null, designResetAt: null,
-        routines: null, routinesResetAt: null,
-        code: null, codeResetAt: null,
-        extraUsage: null,
-        apiUnavailable: true,
-        apiError: 'rate-limited',
-      },
+    const planted: CacheEntry = {
+      schemaVersion: 1,
       timestamp: ancient,
-      rateLimitedCount: 1,
-      retryAfterUntil: Date.now() + 99 * 365 * 24 * 3600_000,
+      reading: {
+        fetchedAt: ancient,
+        planName: 'Max 20x',
+        buckets: {},
+        extraUsage: null,
+        error: 'rate-limited',
+      },
+      lastGood: null,
+      backoff: {
+        rateLimitedCount: 1,
+        retryAfterUntil: Date.now() + 99 * 365 * 24 * 3600_000,
+      },
     };
-    fs.writeFileSync(
-      path.join(pluginDir, 'data.js'),
-      `var DATA=${JSON.stringify(planted)};`,
-      { mode: 0o600 },
-    );
+    fs.mkdirSync(usageDir(), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(usageCachePath(), JSON.stringify(planted), { mode: 0o600 });
+    fs.chmodSync(usageCachePath(), 0o600);
 
     const result = await getUsage({ fetcher: makeFetcher({ data: goodResponse }, calls) });
     assert.equal(calls.count, 1, 'cap must let the read fall through after RETRY_AFTER_MAX_MS');
@@ -236,5 +233,56 @@ describe('getUsage orchestration', { skip: !isPosix }, () => {
       if (restore === undefined) delete process.env.ANTHROPIC_BASE_URL;
       else process.env.ANTHROPIC_BASE_URL = restore;
     }
+  });
+
+  // ── The shared reading log ────────────────────────────────────────────────
+
+  test('a successful fetch appends to the readings log; a failure does not', async () => {
+    await getUsage({ fetcher: makeFetcher({ data: goodResponse }) });
+    assert.equal(readReadings().length, 1);
+
+    await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: null, error: 'http-500' }) });
+    assert.equal(readReadings().length, 1, 'a failure is not a measurement');
+
+    await getUsage({ forceRefresh: true, fetcher: makeFetcher({ data: goodResponse }) });
+    assert.equal(readReadings().length, 2);
+  });
+
+  test('a torn final line does not cost the readings before it', async () => {
+    await getUsage({ fetcher: makeFetcher({ data: goodResponse }) });
+    fs.appendFileSync(readingsPath(), '{"fetchedAt":123,"buck');
+    assert.equal(readReadings().length, 1);
+  });
+
+  // ── Legacy import ─────────────────────────────────────────────────────────
+
+  test('a pre-protocol cache is adopted rather than discarded', async () => {
+    const ts = Date.now();
+    const legacy = {
+      data: {
+        planName: 'Max 20x',
+        fiveHour: 33, fiveHourResetAt: new Date(ts + 3600_000).toISOString(),
+        sevenDay: 11, sevenDayResetAt: null,
+        sonnet: null, sonnetResetAt: null,
+        opus: null, opusResetAt: null,
+        design: null, designResetAt: null,
+        routines: null, routinesResetAt: null,
+        code: null, codeResetAt: null,
+        extraUsage: null,
+        fetchedAt: ts,
+      },
+      timestamp: ts,
+      rateLimitedCount: 4,
+    };
+    fs.mkdirSync(path.dirname(legacyCachePath()), { recursive: true });
+    fs.writeFileSync(legacyCachePath(), `var DATA=${JSON.stringify(legacy)};`, { mode: 0o600 });
+    fs.chmodSync(legacyCachePath(), 0o600);
+
+    const calls = { count: 0 };
+    const result = await getUsage({ fetcher: makeFetcher({ data: goodResponse }, calls) });
+
+    assert.equal(calls.count, 0, 'an adopted cache is still a cache hit');
+    assert.equal(result.data?.fiveHour, 33);
+    assert.equal(readEntryFile().backoff.rateLimitedCount, 4, 'the backoff counter must survive the import');
   });
 });

@@ -1,5 +1,5 @@
 import { mkdirSync, statSync } from 'node:fs';
-import { writeFileSecure, checkFileSafe } from './secure-fs.js';
+import { writeFileSecure, checkFileSafe } from '@mmdemirbas/claude-usage';
 import {
   pluginDir, dashboardHtmlPath,
   CACHE_VAR_DATA, CACHE_VAR_CREDIT_GRANT,

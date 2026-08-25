@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { clamp, parseDate, parseExtraUsage, rehydrateDate, hydrateDates, recoverCacheState, acquireFetchLock, jitteredBackoff, parseRetryAfter, isFetchLockHeld } from '../src/usage.js';
+import { clamp, parseDate, parseExtraUsage, rehydrateDate, hydrateDates, acquireFetchLock, jitteredBackoff, parseRetryAfter, isFetchLockHeld } from '../src/index.js';
+import { readEntry, updateEntry, toReading } from '../src/cache.js';
+import { usageCachePath } from '../src/paths.js';
 import { writeFileSecure } from '../src/secure-fs.js';
-import type { CacheFile, UsageData } from '../src/types.js';
+import type { UsageData } from '../src/types.js';
 
 describe('clamp', () => {
   test('passes through values in range', () => {
@@ -241,30 +243,29 @@ describe('parseExtraUsage', () => {
   });
 });
 
-// Regression: a non-429 failure (HTTP 500, network, timeout) used to call
-// writeCache without preserving lastGoodData / rateLimitedCount. That:
-//   1) reset the exponential-backoff counter so the next 429 started over,
-//   2) blanked lastGoodData so the rate-limit display had nothing to show.
-// recoverCacheState now reads both fields out of the prior cache and the
-// failure path passes them back into writeCache.
-describe('recoverCacheState', () => {
+// Regression: a non-429 failure (HTTP 500, network, timeout) must preserve
+// lastGood and rateLimitedCount. Without that:
+//   1) the exponential-backoff counter reset, so the next 429 started over,
+//   2) lastGood was blanked, so the rate-limit display had nothing to show.
+// The entry is now read-modify-written, and the failure path touches neither
+// field unless it is a 429.
+describe('cache entry read-modify-write', () => {
   let dir: string;
-  let cachePath: string;
+  let priorConfigDir: string | undefined;
 
   before(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-quota-cache-'));
-    cachePath = path.join(dir, 'data.js');
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-usage-cache-'));
+    priorConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = dir;
   });
   after(() => {
+    if (priorConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = priorConfigDir;
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
   beforeEach(() => {
-    try { fs.rmSync(cachePath, { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(usageCachePath(), { force: true }); } catch { /* ignore */ }
   });
-
-  function writeCacheFile(c: CacheFile): void {
-    writeFileSecure(cachePath, `var DATA=${JSON.stringify(c)};`);
-  }
 
   const goodUsage: UsageData = {
     planName: 'Max',
@@ -278,36 +279,78 @@ describe('recoverCacheState', () => {
     extraUsage: null,
   };
 
-  test('returns zeros when no cache exists', () => {
-    assert.deepEqual(recoverCacheState(cachePath), { prevCount: 0, lastGoodData: undefined });
+  const failure: UsageData = {
+    ...goodUsage, fiveHour: null, sevenDay: null,
+    apiUnavailable: true, apiError: 'http-500',
+  };
+
+  function seedGood(now: number, count = 0): void {
+    updateEntry(now, (e) => {
+      const r = toReading(goodUsage, now);
+      e.timestamp = now;
+      e.reading = r;
+      e.lastGood = r;
+      e.backoff = { rateLimitedCount: count, retryAfterUntil: null };
+    });
+  }
+
+  test('returns null when no entry exists', () => {
+    assert.equal(readEntry(), null);
   });
 
-  test('returns prior count + lastGoodData from a rate-limited cache entry', () => {
-    const failure: UsageData = { ...goodUsage, fiveHour: null, sevenDay: null, apiUnavailable: true, apiError: 'rate-limited' };
-    writeCacheFile({ data: failure, timestamp: Date.now(), rateLimitedCount: 3, lastGoodData: goodUsage });
-    const r = recoverCacheState(cachePath);
-    assert.equal(r.prevCount, 3);
-    assert.equal(r.lastGoodData?.fiveHour, 42);
+  test('a non-429 failure leaves lastGood and the backoff counter intact', () => {
+    const now = Date.now();
+    seedGood(now, 3);
+    updateEntry(now + 1, (e) => {
+      e.timestamp = now + 1;
+      e.reading = toReading(failure, now + 1);
+    });
+    const entry = readEntry();
+    assert.equal(entry?.lastGood?.buckets.fiveHour?.utilization, 42);
+    assert.equal(entry?.backoff.rateLimitedCount, 3);
+    assert.equal(entry?.reading?.error, 'http-500');
   });
 
-  test('falls back to cache.data when lastGoodData is absent and the cache is healthy', () => {
-    writeCacheFile({ data: goodUsage, timestamp: Date.now(), rateLimitedCount: 0 });
-    const r = recoverCacheState(cachePath);
-    assert.equal(r.prevCount, 0);
-    assert.equal(r.lastGoodData?.fiveHour, 42);
+  test('a successful write replaces lastGood and clears the backoff', () => {
+    const now = Date.now();
+    seedGood(now, 5);
+    seedGood(now + 1);
+    const entry = readEntry();
+    assert.equal(entry?.backoff.rateLimitedCount, 0);
+    assert.equal(entry?.reading?.error, null);
   });
 
-  test('does not synthesize lastGoodData from a failed cache entry', () => {
-    // A pure failure cache (apiUnavailable=true, no lastGoodData) should not
-    // be treated as a good baseline.
-    const failure: UsageData = { ...goodUsage, fiveHour: null, sevenDay: null, apiUnavailable: true };
-    writeCacheFile({ data: failure, timestamp: Date.now() });
-    assert.equal(recoverCacheState(cachePath).lastGoodData, undefined);
+  test('unknown top-level keys survive a write by a build that does not know them', () => {
+    const now = Date.now();
+    seedGood(now);
+    updateEntry(now, (e) => { (e as Record<string, unknown>).futureField = { keep: 1 }; });
+    seedGood(now + 1);
+    const entry = readEntry() as Record<string, unknown> | null;
+    assert.deepEqual(entry?.futureField, { keep: 1 });
   });
 
-  test('returns zeros when the cache file is malformed JSON', () => {
-    writeFileSecure(cachePath, 'var DATA=garbage;');
-    assert.deepEqual(recoverCacheState(cachePath), { prevCount: 0, lastGoodData: undefined });
+  test('an unknown bucket key is carried forward rather than dropped', () => {
+    const now = Date.now();
+    seedGood(now);
+    updateEntry(now, (e) => {
+      if (e.reading) e.reading.buckets.sevenDayFutureThing = { utilization: 7, resetsAt: null };
+    });
+    const carried = toReading(goodUsage, now + 1, readEntry()?.reading?.buckets);
+    assert.equal(carried.buckets.sevenDayFutureThing?.utilization, 7);
+    assert.equal(carried.buckets.fiveHour?.utilization, 42);
+  });
+
+  test('a malformed entry file reads as absent', () => {
+    writeFileSecure(usageCachePath(), 'not json at all');
+    assert.equal(readEntry(), null);
+  });
+
+  test('an entry from a newer schema is ignored rather than downgraded', () => {
+    writeFileSecure(usageCachePath(), JSON.stringify({
+      schemaVersion: 99, timestamp: Date.now(), reading: null, lastGood: null,
+      backoff: { rateLimitedCount: 0, retryAfterUntil: null },
+    }));
+    assert.equal(readEntry(), null);
   });
 });
 

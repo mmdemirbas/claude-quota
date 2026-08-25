@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import type { ClientRequest, IncomingMessage, RequestOptions } from 'node:http';
-import { requestApi } from '../src/usage.js';
+import { requestApi } from '../src/index.js';
 
 /**
  * Fake https.request that returns a request emitter the test can drive.
@@ -61,9 +61,9 @@ describe('requestApi absolute deadline', () => {
         });
       };
       (req as unknown as { destroy: () => void }).destroy = () => {
-        // When the deadline fires, requestApi destroys the req. Surface
-        // as an end on the response stream so collectBody resolves.
-        (req as unknown as { _r?: IncomingMessage })._r;
+        // Deliberately inert. The test asserts requestApi's own absolute
+        // deadline resolves the promise; destroying the fake request must not
+        // help it along, or the assertion would pass for the wrong reason.
       };
       return req;
     }) as typeof import('node:http').request;
