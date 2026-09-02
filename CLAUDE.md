@@ -41,11 +41,11 @@ so a program in another language could join without reading this code.
 ## Build & Test
 
 ```bash
-./run build            # tsc → dist/
-./run test             # compile test build + run all unit tests
-./run stdin            # pipe mock JSON to test output
-./run install          # build + npm link (makes global claude-quota binary point here)
-./run release [patch]  # bump version, build, test, commit, push, tag → triggers npm publish
+./ctl build                   # tsc → dist/
+./ctl test                    # compile test build + run all unit tests
+./ctl dev stdin               # pipe mock JSON to test output
+./ctl deploy link             # build + npm link (makes global claude-quota binary point here)
+./ctl deploy release [patch]  # bump version, build, test, commit, push, tag → triggers npm publish
 ```
 
 ## How the Plugin Works

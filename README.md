@@ -75,11 +75,11 @@ Then configure the statusline in `~/.claude/settings.json`:
 git clone https://github.com/mmdemirbas/claude-quota.git
 cd claude-quota
 npm install
-./run install
+./ctl deploy link
 ```
 
-`./run install` builds the project and links it as the global `claude-quota` binary.
-Subsequent `./run build` calls take effect immediately — no re-install needed.
+`./ctl deploy link` builds the project and links it as the global `claude-quota` binary.
+Subsequent `./ctl build` calls take effect immediately — no re-install needed.
 
 Configure the statusline:
 
