@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-quota — every Claude Code quota in the statusline, with a pace arrow</title>
+<meta name="description" content="Session, weekly, per-model and extra-usage quotas on the Claude Code statusline, each with the share used, the share of the window elapsed, and where you will land at reset if you keep going at this rate.">
+<meta property="og:title" content="claude-quota — every Claude Code quota in the statusline, with a pace arrow">
+<meta property="og:description" content="Session, weekly, per-model and extra-usage quotas on the Claude Code statusline, each with the share used, the share of the window elapsed, and where you will land at reset if you keep going at this rate.">
+<meta property="og:image" content="https://mmdemirbas.github.io/claude-quota/assets/statusline-light.png">
+<link rel="canonical" href="https://mmdemirbas.github.io/claude-quota/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&display=swap">
+<link rel="stylesheet" href="style.css">
+<style>
+:root { --accent: #0f766e; --accent-2: #8b5cf6; --accent-on: #ffffff; --accent-ink-on-paper: #0f766e; }
+@media (prefers-color-scheme: dark) { :root { --accent-ink-on-paper: #5eead4; } }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#"><span class="mark" aria-hidden="true"></span>claude-quota</a>
+  <nav><a href="#anatomy" class="">What you see</a><a href="#how" class="">How it works</a><a href="#install" class="hide-sm">Install</a><a class="gh" href="https://github.com/mmdemirbas/claude-quota" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a></nav>
+</div></header>
+
+<main>
+<section class="hero"><div class="wrap">
+  <p class="eyebrow">Claude Code statusline plugin · Node.js · MIT</p>
+  <h1>Know you will run out before you run out.</h1>
+  <p class="lead">Claude Code tells you about a quota when you hit it. claude-quota reads the same usage API the /usage page reads and keeps every bucket in the statusline while you work: the 5-hour session, the 7-day window, Sonnet and Opus, extra usage — and an arrow that says whether you will make it to the reset.</p>
+  <div class="cta"><a class="btn btn-solid" href="#install">Install</a><a class="btn btn-quiet" href="https://github.com/mmdemirbas/claude-quota" rel=noopener><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>Source on GitHub</a></div>
+  <div class="stats"><div><b>5</b><span>quota windows in view: 5h, 7d, Sonnet, Opus, extra</span></div><div><b>3 → 1</b><span>lines, sized to the terminal</span></div><div><b>0</b><span>fetches on the hot path</span></div></div>
+  <div class="visual"><figure class="hero-fig frame window"><div class="bar"><i></i><i></i><i></i></div><picture><source media="(prefers-color-scheme: dark)" srcset="assets/statusline-dark.png"><img src="assets/statusline-light.png" alt="Three-line statusline: model and context on the first line, the 5-hour and Sonnet quotas on the second, the 7-day quota and extra usage on the third" loading="eager" width="2157" height="378"></picture></figure></div>
+</div></section>
+
+<section id="why"><div class="wrap">
+  <p class="pitch">A percentage alone does not say whether you are in trouble; 60 % used with 80 % of the window gone is fine, 60 % used with 20 % gone is not. <em>The pace arrow does that arithmetic for you</em>, on every refresh.</p>
+  <div class="features" style="margin-top: clamp(1.5rem, 4vw, 2.5rem)"><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><h3>Pace, not just percentage</h3><p><code>↗145%</code> is where you land at reset at the current rate. Over 100 % means the quota runs out first. The clock glyph <code>○◔◑◕●</code> shows how much of the window has elapsed.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 10 5-10 5L2 7l10-5z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/></svg></div><h3>Every bucket</h3><p>The 5-hour session, the 7-day all-models window, the 7-day Sonnet and Opus windows, and extra usage with spent, pace, projected and the monthly limit.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Colour carries the warning</h3><p>Numbers stay small; the bar cells, the arrow and the money turn yellow and red on their own thresholds, and the cells the quota will never reach go grey.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M12 18h.01"/></svg></div><h3>Fits any terminal</h3><p>Measured in columns, never wraps. Three lines on a normal terminal, two on a short one, <code>model │ ctx% │ 5h% │ 7d%</code> on one.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15 15 0 0 1 0 20a15 15 0 0 1 0-20z"/></svg></div><h3>A live dashboard</h3><p>Every render also writes an HTML dashboard beside its cache — one card per window with a pace gauge — and links it from line 1 on terminals with OSC 8 links.</p></div><div class="feature"><div class="glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>Nothing new to trust</h3><p>The token is the one Claude Code already holds, read from the Keychain. Every file written is <code>0600</code>, dashboard strings are HTML-escaped, and the cache refuses files with broader permissions.</p></div></div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <div class="section-head"><h2>How a render runs</h2><p>Claude Code runs the plugin as a subprocess on every statusline refresh.</p></div>
+  <div class="how split"><div><figure class="fig frame window"><div class="bar"><i></i><i></i><i></i></div><img src="assets/dashboard.png" alt="The HTML dashboard: one card per window with quota, elapsed time, a pace gauge and the reset time" loading="lazy" width="2400" height="1534"><figcaption>The dashboard: the statusline's figures, one card per window, polled every five seconds.</figcaption></figure></div><ol class="steps"><li><div><b>Context arrives on stdin</b><p>Model, effort, context window and cwd, as JSON — the same payload every statusline command gets.</p></div></li><li><div><b>The token is read</b><p>From the macOS Keychain, or from <code>~/.claude/.credentials.json</code> elsewhere if it is <code>0600</code> and yours. The same credential Claude Code uses; no login of its own.</p></div></li><li><div><b>Usage is fetched or served from cache</b><p><code>GET api.anthropic.com/api/oauth/usage</code>, cached for two minutes. From 90 seconds a background refresh starts, so a long session never shows stale numbers and never fetches on the hot path.</p></div></li><li><div><b>One to three lines</b><p>Rendered to stdout, sized to the terminal; the reset timer, then pace and projection, then the bar are dropped in that order until the line fits. The dashboard is rewritten beside the cache.</p></div></li></ol></div>
+  
+</div></section>
+<section id="install"><div class="wrap">
+  <div class="section-head"><h2>Install</h2><p>Node.js 18 or newer, and a Pro or Max subscription: the usage API has nothing for API-key logins, so only the model and context line renders there.</p></div>
+  <div class="install two"><div><h3>From npm</h3><pre class="code"><code>npm install -g @mmdemirbas/claude-quota</code></pre><p class=note>Then point the statusline at it in <code>~/.claude/settings.json</code>:</p></div><div><h3>settings.json</h3><pre class="code"><code>{
+  &quot;statusLine&quot;: {
+    &quot;type&quot;: &quot;command&quot;,
+    &quot;command&quot;: &quot;claude-quota&quot;
+  }
+}</code></pre><p class=note>If you use <code>claude-hud</code>, disable it first so the two do not share the line.</p></div></div>
+</div></section>
+<section id="anatomy"><div class="wrap">
+  <div class="section-head"><h2>What you see</h2><p>Each segment of the statusline and what it means.</p></div>
+  <div class="gallery"><figure class="fig frame plain"><img src="assets/anatomy.png" alt="The statusline with every segment labelled" loading="lazy" width="2340" height="972"></figure></div><div class="table-wrap"><table><thead><tr><th>Segment</th><th>Meaning</th></tr></thead><tbody><tr><td><code>sonnet high</code></td><td>Model family and effort level</td></tr><tr><td><code>ctx:██░░░░░░░░ 23%</code></td><td>Context window: a 10-cell bar and the percentage</td></tr><tr><td><code>dashboard</code></td><td>An OSC 8 hyperlink to the HTML dashboard; plain text where links are unsupported</td></tr><tr><td><code>lakelab git:(main*)</code></td><td>Project directory and branch; <code>*</code> means a dirty working tree</td></tr><tr><td><code>max 5x</code></td><td>Plan name and multiplier</td></tr><tr><td><code>5h:</code> <code>7d:</code> <code>snt:</code> <code>ops:</code></td><td>The 5-hour session, the 7-day all-models window, the 7-day Sonnet and Opus windows</td></tr><tr><td><code>█████░░░░░ 31%</code></td><td>Used share of the window</td></tr><tr><td><code>↗145%</code> <code>→ 90%</code> <code>↘ 74%</code></td><td>Pace: the projected share at the end of the window; over 100 % means the quota runs out before it resets</td></tr><tr><td><code>◔3h56m</code></td><td>Time until reset; the glyph is how much of the window has elapsed</td></tr><tr><td><code>⟳18:00</code></td><td>Local time of the last successful fetch</td></tr><tr><td><code>●$:</code> / <code>○$:</code></td><td>Extra usage on or off</td></tr><tr><td><code>$0 ↘ $0 /$5</code></td><td>Extra usage spent · pace · projected · monthly limit</td></tr></tbody></table></div>
+</div></section><section id="security"><div class="wrap">
+  <div class="section-head"><h2>Security model</h2><p>The plugin reads a credential and writes files in your home directory, so each surface has a rule.</p></div>
+  <div class="table-wrap"><table><thead><tr><th>Surface</th><th>Rule</th><th>Why</th></tr></thead><tbody><tr><td>Credential source</td><td>Keychain first; <code>~/.claude/.credentials.json</code> as the fallback, refused unless <code>0600</code> and owned by you</td><td>A token planted by another local user is never used</td></tr><tr><td>Cache files</td><td><code>data.js</code>, <code>credit-grant.js</code>, <code>.profile-cache.json</code>, <code>dashboard.html</code> under <code>~/.claude/plugins/claude-quota/</code>, mode <code>0600</code>; broader modes are refused</td><td>A second local user cannot feed the dashboard</td></tr><tr><td>Dashboard output</td><td>Every externally sourced string is HTML-escaped</td><td>A tampered API response cannot run script in the page</td></tr><tr><td>HTTPS</td><td>System trust store, TLS 1.2 minimum, no certificate pin</td><td>Anthropic rotates the leaf without a published pin set; a hardcoded pin would become an outage</td></tr><tr><td>Stderr</td><td>One warning line for HTTP 401/403 and rejected files; rate limits and expiry stay silent</td><td><code>CLAUDE_QUOTA_SILENT=1</code> disables all warnings</td></tr></tbody></table></div>
+</div></section>
+
+<section id="more"><div class="wrap">
+  <div class="section-head"><h2>Go deeper</h2></div>
+  <div class="links"><a class="link-card" href="https://github.com/mmdemirbas/claude-quota#readme" rel=noopener><b>README</b><span>Requirements, the colour thresholds, the adaptive layout, troubleshooting and development.</span><small>GitHub</small></a><a class="link-card" href="https://github.com/mmdemirbas/claude-quota/blob/main/docs/usage-cache-protocol.md" rel=noopener><b>Usage cache protocol</b><span>The on-disk protocol, version 1, that lets other tools on the same machine share the readings without a daemon.</span><small>Specification</small></a><a class="link-card" href="https://www.npmjs.com/package/@mmdemirbas/claude-quota" rel=noopener><b>npm</b><span>@mmdemirbas/claude-quota — one global install, no dependencies at runtime.</span><small>Package</small></a></div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>claude-quota</span>
+  <span class="spacer"></span>
+  <a href="https://github.com/mmdemirbas/claude-quota" rel="noopener">GitHub</a>
+  <a href="https://mdemirbas.com/en/projects/claude-quota/" rel="noopener">Muhammed Demirbaş</a>
+  <a href="https://mdemirbas.com/" rel="noopener">Other projects</a>
+</div></footer>
+</body>
+</html>
