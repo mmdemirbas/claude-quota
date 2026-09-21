@@ -1,64 +1,65 @@
 # claude-quota
 
-Compact, quota-focused statusline plugin for Claude Code. Shows all usage buckets at a glance — no
-more visiting the usage page.
+**Every Claude Code quota in the statusline — session, weekly, per-model and extra usage —
+with a pace arrow that says whether you will run out before the window resets.**
+
+[![npm](https://img.shields.io/npm/v/%40mmdemirbas%2Fclaude-quota)](https://www.npmjs.com/package/@mmdemirbas/claude-quota)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+[npm](https://www.npmjs.com/package/@mmdemirbas/claude-quota) ·
+[Source](https://github.com/mmdemirbas/claude-quota) ·
+[Changelog](CHANGELOG.md) ·
+[Project page](https://mdemirbas.com/en/projects/claude-quota/)
+
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/statusline-light.png">
+  <img src="docs/statusline-dark.png" alt="Three-line statusline: model and context on the first line, the 5-hour and Sonnet quotas on the second, the 7-day quota and extra usage on the third" width="720">
+</picture>
+
+Claude Code tells you about a quota when you hit it. This plugin reads the same usage API the
+`/usage` page reads and keeps every bucket in view while you work: how much of each window is
+used, how much of the window has elapsed, where you will land at reset if you keep going at
+this rate, and what extra usage has cost so far. Three lines on a normal terminal; one line on
+a short one.
 
 ## What you see
 
-![dark.png](docs/dark.png)
+![The statusline with every segment labelled](docs/anatomy.png)
 
-![light.png](docs/light.png)
+| Segment | Meaning |
+|---|---|
+| `sonnet high` | Model family and effort level |
+| `ctx:██░░░░░░░░  23%` | Context window: a 10-cell bar and the percentage |
+| `dashboard` | An OSC 8 hyperlink to the HTML dashboard (below); plain text on terminals without link support |
+| `lakelab git:(main*)` | Project directory and branch; `*` means a dirty working tree |
+| `max 5x` | Plan name and multiplier |
+| `5h:` `7d:` `snt:` `ops:` | The 5-hour session window, the 7-day all-models window, the 7-day Sonnet and Opus windows |
+| `█████░░░░░  31%` | Used share of the window |
+| `↗145%` `→ 90%` `↘ 74%` | Pace: the projected share at the end of the window. Over 100 % means the quota runs out before it resets |
+| `◔3h56m` | Time until reset; the glyph is how much of the window has elapsed, `○◔◑◕●` = 0 → 100 % |
+| `⟳18:00` | Local time of the last successful fetch |
+| `●$:` / `○$:` | Extra usage on or off |
+| `  $0 ↘  $0 /$5` | Extra usage spent · pace · projected · monthly limit |
 
-```
-sonnet high │ ctx:██░░░░░░░░  23% │ lakelab git:(main*) │ ⧉
-max 5x      │  5h:██░░░░░░░░  17% ↗139% ◔3h56m │  7d:██░░░░░░░░  23% ↘  76% ◔4d20h
-⟳18:01      │ snt:██████░░░░  63% → 91% ◕2d3h  │  ●$:░░░░░░░░░░   $0 ↘  $0 /$5
-```
+**Colour** carries the warning, so the numbers can stay small:
 
-### Segments
-
-**Line 1**
-
-| Segment               | Meaning                                         |
-|-----------------------|-------------------------------------------------|
-| `sonnet high`         | Model family + effort level                     |
-| `ctx:██░░░░░░░░  23%` | Context window: 10-char bar + right-justified % |
-| `lakelab`             | Project directory (last path segment)           |
-| `git:(main*)`         | Git branch, `*` = dirty working tree            |
-| `⧉`                   | Clickable link to the full dashboard (OSC 8 hyperlink); opens `~/.claude/plugins/claude-quota/dashboard.html`. Rendered only when the terminal is wide enough for the full tier |
-
-**Quota segments** (lines 2 & 3 at rows ≥ 3; merged onto one line at rows = 2)
-
-| Segment                         | Meaning                                                                                 |
-|---------------------------------|-----------------------------------------------------------------------------------------|
-| `max 5x`                        | Plan name + multiplier (lowercase)                                                      |
-| `5h:` / `7d:` / `snt:` / `ops:` | Quota labels (5h session, 7d all-models, 7d Sonnet, 7d Opus)                            |
-| `█████░░░░░`                    | 10-char bar per metric                                                                  |
-| ` 17%`                          | Current utilization, right-justified to 4 chars                                         |
-| `↘ 32%` / `→ 90%` / `↗140%`     | Pace glyph + projected end-of-window utilization; >100% means you will exceed the quota |
-| `◔3h56m`                        | Time until quota resets; glyph shows window progress: `○◔◑◕●` = 0→100% elapsed         |
-| `⟳18:01`                        | Local time of last usage data fetch (shown in col-0 of line 3)                          |
-| `●$:` / `○$:`                   | Extra usage enabled (`●`) or disabled (`○`)                                             |
-| `  $0 ↘  $0 /$5`                | Current spend · pace glyph · projected · monthly limit (all fixed-width, aligned)       |
-
-### Color coding
-
-- **Context bar**: green < 70% → yellow 70–85% → red ≥ 85%
-- **Quota bars (filled `█`)**: blue < 75% → magenta 75–90% → red ≥ 90%. When over pace, up-to-pace portion is dim; over-pace portion is bright so excess stands out
-- **Quota bars (empty `░`)**: dim = projected path · gray = wasted quota (projected < 100%) · red = quota will run out (projected ≥ 100%)
-- **Pace glyph**: green `↘` under-pace · dim `→` on-pace · yellow/red `↗` over-pace
-- **Projected**: dim ≤ 79% · yellow 80–100% · red > 100%
-- **Money**: green $0 · yellow > $0 · red ≥ 80% of limit
+- Context bar: green under 70 %, yellow to 85 %, red from 85 %.
+- Quota bars, filled cells: blue under 75 %, magenta to 90 %, red from 90 %. When over pace,
+  the cells up to the pace line are dim and the cells past it are bright.
+- Quota bars, empty cells: dim along the projected path; gray for quota that will go unused
+  (projection under 100 %); red for the stretch where the quota will already be gone
+  (projection at or over 100 %).
+- Pace arrow: green `↘` under pace, dim `→` on pace, yellow or red `↗` over pace.
+- Projection: dim to 79 %, yellow to 100 %, red beyond.
+- Money: green at $0, yellow above, red from 80 % of the limit.
 
 ## Install
-
-### Option A: npm (recommended)
 
 ```bash
 npm install -g @mmdemirbas/claude-quota
 ```
 
-Then configure the statusline in `~/.claude/settings.json`:
+Then point the statusline at it in `~/.claude/settings.json`:
 
 ```json
 {
@@ -69,72 +70,18 @@ Then configure the statusline in `~/.claude/settings.json`:
 }
 ```
 
-### Option B: from source
+From source instead:
 
 ```bash
 git clone https://github.com/mmdemirbas/claude-quota.git
 cd claude-quota
 npm install
-./ctl deploy link
+./ctl deploy link    # builds and links the global claude-quota binary to this checkout
 ```
 
-`./ctl deploy link` builds the project and links it as the global `claude-quota` binary.
-Subsequent `./ctl build` calls take effect immediately — no re-install needed.
+After `deploy link`, every `./ctl build` takes effect immediately.
 
-Configure the statusline:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "claude-quota"
-  }
-}
-```
-
-## Requirements
-
-- macOS (Keychain credential reading)
-- Node.js ≥ 18
-- Claude Code with an active Pro/Max subscription (OAuth login)
-- API key users: usage data is unavailable; the quota line is skipped
-
-## How it works
-
-1. Claude Code invokes the plugin as a subprocess, piping context JSON on stdin
-2. Plugin reads your OAuth token from macOS Keychain (same credential as Claude Code itself)
-3. Calls `api.anthropic.com/api/oauth/usage` — response cached 2 min (hard TTL); after 45 s a
-   background refresh is triggered so data stays current during long sessions
-4. Renders 1–3 lines to stdout, adapting to terminal width and height
-
-## Adaptive layout
-
-The output adapts to the terminal width and height so it never wraps or garbles.
-
-**Height tiers** (rows available):
-
-| Rows | Layout |
-|------|--------|
-| ≥ 3 | Full 3-line layout (default) |
-| 2 | Line 1 unchanged · Line 2 flattens all quotas (5h + 7d + snt + ops + $) |
-| 1 | Single line: `model │ ctx% │ 5h% │ 7d%` — compact, no bars |
-
-**Width tiers** (applied per-line, degrading until the line fits):
-
-| Tier | Content per quota |
-|------|-------------------|
-| Full | bar + pct + pace glyph + projected% + reset timer |
-| No-reset | drop reset timer |
-| No-pace | drop pace glyph + projected% |
-| Compact | label + pct only (no bar) |
-
-Line 1 git info follows the same tier order: `project + branch*` → `project` → omitted.
-
-Terminal dimensions are read from `process.stderr` (stays attached to the TTY even when stdout is piped), then `$COLUMNS`/`$LINES`, then defaults (120×3).
-
-## Replacing claude-hud
-
-If you use `claude-hud`, disable it first to avoid a crowded statusline:
+If you use `claude-hud`, disable it first so the two do not share the line:
 
 ```json
 {
@@ -144,64 +91,98 @@ If you use `claude-hud`, disable it first to avoid a crowded statusline:
 }
 ```
 
+### Requirements
+
+- Claude Code with a Pro or Max subscription (OAuth login). API-key users get no quota line,
+  because the usage API has nothing for them; the model and context line still renders.
+- Node.js 18 or newer.
+- macOS reads the token from the Keychain. Other systems fall back to
+  `~/.claude/.credentials.json` (see the security model).
+
+## How it works
+
+1. Claude Code runs the plugin as a subprocess on every statusline refresh, with the session's
+   context JSON on stdin.
+2. The plugin reads the OAuth token Claude Code itself uses — from the macOS Keychain, or from
+   the credentials file elsewhere.
+3. It calls `api.anthropic.com/api/oauth/usage`. The answer is cached for 2 minutes; after
+   90 seconds a background refresh starts, so a long session never shows stale numbers and
+   never fetches on the hot path.
+4. It renders one to three lines to stdout, sized to the terminal, and rewrites the HTML
+   dashboard beside its cache.
+
+### The dashboard
+
+![The HTML dashboard: one card per window with quota, elapsed time, a pace gauge and the reset time](docs/dashboard.png)
+
+Every render also writes `~/.claude/plugins/claude-quota/dashboard.html`, so its figures are
+the statusline's figures. The page polls its `data.js` every 5 seconds; leave it open in a tab
+for a live view. Open it by clicking `dashboard` on line 1 (iTerm2, kitty, Ghostty, WezTerm,
+VS Code's terminal, recent Windows Terminal and GNOME Terminal support OSC 8 links) or with
+`open ~/.claude/plugins/claude-quota/dashboard.html`.
+
+The link is the first thing dropped when the terminal is narrow, so the project and branch
+keep their room.
+
+### Adaptive layout
+
+The output is measured in terminal columns and never wraps.
+
+| Rows available | Layout |
+|---|---|
+| 3 or more | The three-line layout above |
+| 2 | Line 1 as is; line 2 carries every quota (`5h` `7d` `snt` `ops` `$`) |
+| 1 | `model │ ctx% │ 5h% │ 7d%`, no bars |
+
+Per line, content is dropped in this order until it fits: the reset timer, then the pace and
+projection, then the bar (leaving label and percentage). Line 1 degrades from
+`project + branch*` to `project` to nothing. Dimensions come from `process.stderr` (still a TTY
+when stdout is piped), then `$COLUMNS` / `$LINES`, then defaults.
+
 ## Troubleshooting
 
-**No quota line appears** — you may be an API key user, on a free plan, or on a custom
-`ANTHROPIC_BASE_URL`. The plugin only fetches usage for direct Claude.ai OAuth subscribers.
-
-**`usage:⚠` shown** — the API is unreachable (network error, timeout). Cached data is shown for 15
-s, then the warning appears.
-
-**`⟳` indicator** — you hit a rate limit on the usage API. Last-known data is shown with exponential
-backoff (60 s → 5 min). The `⟳` clears once a fresh fetch succeeds.
-
-**Warning `[claude-quota] cache file rejected ... reason=permissive-mode`** — an old cache file
-was written before the permission hardening shipped. The plugin refuses to read files with group
-or world permission bits and re-fetches; the warning clears after the next successful fetch writes
-a fresh `0600` cache. Set `CLAUDE_QUOTA_SILENT=1` to suppress the line if you prefer.
-
-## Dashboard
-
-The plugin also writes a full HTML dashboard to:
-
-```
-~/.claude/plugins/claude-quota/dashboard.html
-```
-
-The file is regenerated on every statusline render, so its numbers stay in sync with the statusline
-automatically. The page itself polls its local `data.js` every 5 seconds and redraws — leave it open
-in a browser tab for a live view.
-
-Ways to open it:
-
-- **Click the `⧉` glyph on line 1.** In OSC 8-capable terminals (iTerm2, kitty, Ghostty, WezTerm,
-  VS Code terminal, recent Windows Terminal, recent GNOME Terminal), the glyph is a clickable
-  hyperlink that opens the dashboard in your default browser. Terminals without OSC 8 support
-  strip the escape bytes and show just the glyph — the URL is never leaked into visible output.
-- **Open directly**: `open ~/.claude/plugins/claude-quota/dashboard.html` (macOS) or paste
-  `file:///Users/you/.claude/plugins/claude-quota/dashboard.html` into a browser.
-
-The `⧉` glyph only appears when the terminal is wide enough for the full line-1 tier; narrower
-terminals drop it first so that the project and branch segments keep their space.
+- **No quota line** — API-key login, a free plan, or a custom `ANTHROPIC_BASE_URL`. Usage is
+  fetched only for direct Claude.ai OAuth subscribers.
+- **`usage:⚠`** — the API is unreachable (network error, timeout). Cached data is shown for
+  15 seconds, then the warning.
+- **`⟳` stays on** — the usage API rate-limited the plugin. Last-known data is shown and the
+  retry backs off from 60 seconds to 10 minutes; the glyph clears on the next successful fetch.
+- **`[claude-quota] cache file rejected … reason=permissive-mode`** — a cache file written
+  before the permission hardening. The plugin refuses files with group or world bits, re-fetches,
+  and the next successful write is `0600`. `CLAUDE_QUOTA_SILENT=1` hides the line.
 
 ## Security model
 
-- **Credential source**: the OAuth token is read from the macOS Keychain first, with
-  `~/.claude/.credentials.json` as a fallback on non-macOS hosts. The fallback file is refused
-  unless it is `0600` and owned by the current user, so a token planted by another local user
-  cannot be consumed.
-- **Cache files**: `data.js`, `credit-grant.js`, `.profile-cache.json`, and `dashboard.html` live
-  under `~/.claude/plugins/claude-quota/` with mode `0600`. The renderer refuses to read cache
-  files with broader modes, which prevents a second local user from poisoning the dashboard input.
-- **Dashboard output**: all externally-sourced strings (currently the plan name) are HTML-escaped
-  before being inserted into `dashboard.html`. A tampered API response cannot execute script in
-  the dashboard page.
-- **HTTPS**: calls to `api.anthropic.com` use Node's default system trust store with a minimum
-  TLS version of `TLSv1.2`. Anthropic's leaf certificate is NOT pinned because Anthropic rotates
-  it without publishing a pin set — a hardcoded pin would eventually cause a hard outage. This
-  means an attacker with the ability to install a trusted CA on the host (root, admin, or a
-  corporate MDM profile) can intercept API traffic. The `0600` cache files and the HTML escaping
-  above are the defence-in-depth against a successful intercept.
-- **Stderr warnings**: auth failures (HTTP 401/403), rejected cache files, and rejected
-  credential files emit a single-line warning to stderr. Rate limits and normal expiry stay
-  silent. Set `CLAUDE_QUOTA_SILENT=1` to disable all warnings.
+- **Credential source.** The OAuth token comes from the macOS Keychain first, with
+  `~/.claude/.credentials.json` as the fallback on other hosts. The fallback is refused unless it
+  is `0600` and owned by the current user, so a token planted by another local user is never
+  used.
+- **Cache files.** `data.js`, `credit-grant.js`, `.profile-cache.json` and `dashboard.html`
+  live under `~/.claude/plugins/claude-quota/` with mode `0600`, and the renderer refuses to read
+  a cache file with broader permissions — a second local user cannot feed the dashboard.
+- **Dashboard output.** Every externally sourced string (today, the plan name) is HTML-escaped
+  before it reaches `dashboard.html`; a tampered API response cannot run script in the page.
+- **HTTPS.** Calls to `api.anthropic.com` use Node's system trust store with TLS 1.2 as the
+  floor. The leaf certificate is not pinned, because Anthropic rotates it without a published
+  pin set and a hardcoded pin would eventually become an outage. Someone who can install a
+  trusted CA on the host (root, admin, an MDM profile) can therefore intercept the call; the
+  `0600` cache files and the HTML escaping are the defence behind that line.
+- **Stderr.** Auth failures (HTTP 401/403), rejected cache files and rejected credential files
+  emit one warning line. Rate limits and normal expiry stay silent. `CLAUDE_QUOTA_SILENT=1`
+  disables all warnings.
+
+The on-disk format other tools can read is specified in
+[docs/usage-cache-protocol.md](docs/usage-cache-protocol.md).
+
+## Development
+
+```bash
+./ctl build          # compile
+./ctl test           # unit tests
+./ctl deploy link    # use this checkout as the global binary
+node scripts/docs-figures.mjs tmp/figures   # regenerate the README figures' HTML from the renderer
+```
+
+## License
+
+[MIT](LICENSE)
