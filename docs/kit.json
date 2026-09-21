@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/mmdemirbas/oku/main/kit/schema/project-kit.schema.json",
+  "name": "claude-quota",
+  "description": "Every Claude Code quota in the statusline, with a pace arrow that says whether you will run out before the window resets.",
+  "accent": "violet",
+  "audience": "Reader",
+  "domains": ["ai-llm", "web"],
+  "lang": "en",
+  "lang_fallback": ["en"],
+  "languages": [{ "code": "en", "label": "English" }],
+  "defaultLanguage": "en",
+  "skip_gitignored": true,
+  "rebuild_command": false
+}

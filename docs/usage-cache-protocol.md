@@ -1,4 +1,8 @@
-# Usage cache protocol, version 1
+---
+title: Usage cache protocol
+order: 40
+summary: The on-disk protocol, version 1, that lets independent programs on one machine share Claude usage readings without a daemon.
+---
 
 A file protocol for sharing Claude subscription usage readings between
 independent programs on one machine.

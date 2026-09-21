@@ -6,6 +6,7 @@ with a pace arrow that says whether you will run out before the window resets.**
 [![npm](https://img.shields.io/npm/v/%40mmdemirbas%2Fclaude-quota)](https://www.npmjs.com/package/@mmdemirbas/claude-quota)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+[Documentation](https://mmdemirbas.github.io/claude-quota/) ·
 [npm](https://www.npmjs.com/package/@mmdemirbas/claude-quota) ·
 [Source](https://github.com/mmdemirbas/claude-quota) ·
 [Changelog](CHANGELOG.md) ·
@@ -172,7 +173,8 @@ when stdout is piped), then `$COLUMNS` / `$LINES`, then defaults.
   disables all warnings.
 
 The on-disk format other tools can read is specified in
-[docs/usage-cache-protocol.md](docs/usage-cache-protocol.md).
+[the usage cache protocol](https://mmdemirbas.github.io/claude-quota/usage-cache-protocol.html)
+([source](docs/usage-cache-protocol.md)).
 
 ## Development
 
