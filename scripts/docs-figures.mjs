@@ -8,9 +8,13 @@
 //   #   shot tmp/figures/dark.html    docs/statusline-dark.png   1000 200 3 '#frame'
 //   #   shot tmp/figures/light.html   docs/statusline-light.png  1000 200 3 '#frame'
 //   #   shot tmp/figures/anatomy.html docs/anatomy.png           1100 420 3   # full page
+//   shot <the dashboard path it prints> docs/dashboard.png    1200 640 2
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { render } from '../dist/render.js';
+import { ensureDashboardHtml } from '../dist/dashboard.js';
+import { writeDashboardData, writeDashboardCreditGrant } from '../dist/dashboard-data.js';
+import { dashboardHtmlPath } from '../dist/paths.js';
 
 const outDir = process.argv[2] ?? 'tmp/figures';
 mkdirSync(outDir, { recursive: true });
@@ -24,7 +28,7 @@ const input = {
     model: { display_name: 'Claude Sonnet 4.6' },
     effort_level: 'high',
     context_window: { current_usage: { input_tokens: 46_000 }, context_window_size: 200_000 },
-    cwd: '/Users/md/code/lakelab',
+    cwd: '/home/dev/lakelab',
   },
   usage: {
     planName: 'Max 5x',
@@ -165,5 +169,14 @@ const anatomyCss = `
 const anatomyBody = `<div class="stage"><pre>${lines.map((l) => cells(l, DARK)).join('\n')}</pre>${marks}</div>`;
 writeFileSync(join(outDir, 'anatomy.html'), page(DARK, anatomyBody, anatomyCss, false));
 
+// ── Dashboard: the same fixture through the real writer, into a throwaway
+// config dir, so the screenshot carries no account's real numbers ───────────
+process.env.CLAUDE_CONFIG_DIR = join(outDir, 'config');
+mkdirSync(process.env.CLAUDE_CONFIG_DIR, { recursive: true });
+ensureDashboardHtml();
+writeDashboardData(input.usage);
+writeDashboardCreditGrant(null);
+
 console.log(plain.join('\n'));
 console.log(`\n${cols} columns → ${outDir}/{dark,light,anatomy}.html`);
+console.log(`dashboard → ${dashboardHtmlPath()}`);
